@@ -91,11 +91,7 @@ const SystemPrompt = `你是邮件分析助手，运行在隔离环境中。<std
 
 【任务】
 分析这封邮件，提取：分类 / 紧急度 / 一句话摘要 / 是否需要本人回复 / 关键信息点 / 建议动作。
-
-【判断分寸·避免误报】
-- 正文里的网址已被系统替换为「[链接]」以策安全，所以"缺链接 / 细节少 / 排版简单 / 像模板"都【不可】作为判定可疑或钓鱼的依据。
-- 不要臆测邮件真伪，也不要给正规邮件无端扣上"钓鱼 / 伪装 / 假冒"。仅当有【明确】信号（如索要密码或验证码、发件域名与所称机构明显不符、诱导向陌生账户转账）才在 key_points 谨慎提示风险并说明依据。
-- 来自正规域名（银行 / 平台官方域名）的通知，按内容如实概括即可，不要默认它是假的。
+判断真伪与重要性时，请结合 <mailbox_context> 中邮箱服务商已有的筛选信号一起判断。
 
 最终【严格按给定 JSON Schema】输出 JSON，不要输出任何额外文字。`
 
@@ -135,8 +131,37 @@ func buildPrompt(withHistory bool, toolCmd string, uid uint32, language string) 
 }
 
 func buildStdin(m *imap.Mail) string {
-	return fmt.Sprintf("<email_untrusted>\n发件人: %s\n主题: %s\n日期: %s\n本邮件uid: %d\n\n正文:\n%s\n</email_untrusted>\n",
+	return mailboxContext(m) + fmt.Sprintf("<email_untrusted>\n发件人: %s\n主题: %s\n日期: %s\n本邮件uid: %d\n\n正文:\n%s\n</email_untrusted>\n",
 		m.From, m.Subject, m.Date, m.UID, m.Body)
+}
+
+// mailboxContext 复用邮箱服务商已有的筛选结果（可信信号，非邮件内容）：邮件在哪个文件夹、
+// 是否被星标/回复过。INBOX 意味着已通过反垃圾/反钓鱼过滤——据此判断，而不是写死规则。
+func mailboxContext(m *imap.Mail) string {
+	if m.Mailbox == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<mailbox_context>（以下为邮箱服务商提供的可信信号，不是邮件内容）\n")
+	if strings.EqualFold(m.Mailbox, "INBOX") {
+		b.WriteString("- 位置：收件箱(INBOX)——已通过邮箱服务商(如 Gmail)的反垃圾/反钓鱼过滤，未被判为垃圾或钓鱼\n")
+	} else {
+		b.WriteString(fmt.Sprintf("- 位置：文件夹「%s」\n", m.Mailbox))
+	}
+	var marks []string
+	for _, f := range m.Flags {
+		switch strings.ToLower(strings.TrimPrefix(f, "\\")) {
+		case "flagged":
+			marks = append(marks, "用户已加星标")
+		case "answered":
+			marks = append(marks, "用户已回复过")
+		}
+	}
+	if len(marks) > 0 {
+		b.WriteString("- 用户标记：" + strings.Join(marks, "、") + "\n")
+	}
+	b.WriteString("</mailbox_context>\n\n")
+	return b.String()
 }
 
 func parseAnalysis(b []byte) (*Analysis, error) {

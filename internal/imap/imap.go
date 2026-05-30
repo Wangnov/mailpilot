@@ -25,6 +25,8 @@ type Mail struct {
 	MessageID string
 	Body      string
 	Images    [][]byte
+	Mailbox   string   // 所在文件夹（复用邮箱侧信号：INBOX = 已过反垃圾过滤）
+	Flags     []string // 标准 IMAP 标记，如 \Flagged(星标) \Answered(已回复)
 }
 
 type Box struct {
@@ -121,7 +123,7 @@ func (b *Box) Search(criteria *imap.SearchCriteria) ([]uint32, error) {
 // Fetch 取一封邮件的完整内容并解析。
 func (b *Box) Fetch(uid uint32, maxBody int) (*Mail, error) {
 	bs := &imap.FetchItemBodySection{}
-	opts := &imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{bs}}
+	opts := &imap.FetchOptions{UID: true, Flags: true, BodySection: []*imap.FetchItemBodySection{bs}}
 	cmd := b.c.Fetch(imap.UIDSetNum(imap.UID(uid)), opts)
 	defer cmd.Close()
 	msg := cmd.Next()
@@ -132,8 +134,14 @@ func (b *Box) Fetch(uid uint32, maxBody int) (*Mail, error) {
 	if err != nil {
 		return nil, err
 	}
-	raw := buf.FindBodySection(bs)
-	return parseMail(uid, raw, maxBody), nil
+	m := parseMail(uid, buf.FindBodySection(bs), maxBody)
+	if m != nil { // 复用邮箱侧信号
+		m.Mailbox = b.cfg.Mailbox
+		for _, f := range buf.Flags {
+			m.Flags = append(m.Flags, string(f))
+		}
+	}
+	return m, nil
 }
 
 // IdleLoop 进入 IDLE，新邮件触发 onNew；每 timeout 重置一次 IDLE。断连返回错误由外层重连。
@@ -166,7 +174,6 @@ func (b *Box) IdleLoop(onNew func(), timeout time.Duration) error {
 var (
 	scriptRe = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
 	tagRe    = regexp.MustCompile(`(?s)<[^>]+>`)
-	urlRe    = regexp.MustCompile(`https?://\S+`)
 	wsRe     = regexp.MustCompile(`\s+`)
 )
 
@@ -180,7 +187,7 @@ func parseMail(uid uint32, raw []byte, maxBody int) *Mail {
 	m := &Mail{UID: uid}
 	mr, err := mail.CreateReader(bytes.NewReader(raw))
 	if err != nil {
-		m.Body = clip(stripURLs(string(raw)), maxBody) // 非 MIME 回退也要截断，防超大原文
+		m.Body = clip(string(raw), maxBody) // 非 MIME 回退也要截断，防超大原文
 		return m
 	}
 	if s, err := mr.Header.Subject(); err == nil {
@@ -231,12 +238,8 @@ func parseMail(uid uint32, raw []byte, maxBody int) *Mail {
 	if body == "" {
 		body = stripHTML(html.String())
 	}
-	m.Body = clip(stripURLs(body), maxBody)
+	m.Body = clip(body, maxBody) // 不再剥离 URL：工具受限(只读检索)，保留链接才能正确判别内容/真伪
 	return m
-}
-
-func stripURLs(s string) string {
-	return strings.TrimSpace(urlRe.ReplaceAllString(s, "[链接]"))
 }
 
 // clip 按字节上限截断，并回退到合法 UTF-8 边界（不切碎多字节中文字符）。
