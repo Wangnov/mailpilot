@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
-	"github.com/Wangnov/mailpilot-go/internal/imap"
+	"github.com/Wangnov/mailpilot/internal/config"
+	"github.com/Wangnov/mailpilot/internal/imap"
 )
 
 type Analysis struct {

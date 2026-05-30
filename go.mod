@@ -1,4 +1,4 @@
-module github.com/Wangnov/mailpilot-go
+module github.com/Wangnov/mailpilot
 
 go 1.25.0
 

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
-	"github.com/Wangnov/mailpilot-go/internal/imap"
+	"github.com/Wangnov/mailpilot/internal/config"
+	"github.com/Wangnov/mailpilot/internal/imap"
 )
 
 // codexProvider 用 ChatGPT 订阅(codex CLI)分析，支持 agentic 历史检索。

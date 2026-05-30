@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
+	"github.com/Wangnov/mailpilot/internal/config"
 )
 
 type telegramNotifier struct{ cfg config.Notifier }

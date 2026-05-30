@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
+	"github.com/Wangnov/mailpilot/internal/config"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/mail"

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
+	"github.com/Wangnov/mailpilot/internal/config"
 )
 
 // Images 逐张识别并合并文字；未启用/无 token/失败返回空串。

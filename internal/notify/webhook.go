@@ -3,7 +3,7 @@ package notify
 import (
 	"fmt"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
+	"github.com/Wangnov/mailpilot/internal/config"
 )
 
 type webhookNotifier struct{ cfg config.Notifier }

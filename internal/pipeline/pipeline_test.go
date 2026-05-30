@@ -3,7 +3,7 @@ package pipeline
 import (
 	"testing"
 
-	"github.com/Wangnov/mailpilot-go/internal/imap"
+	"github.com/Wangnov/mailpilot/internal/imap"
 )
 
 func TestLikelyHasHistory(t *testing.T) {

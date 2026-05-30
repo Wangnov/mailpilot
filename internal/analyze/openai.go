@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
-	"github.com/Wangnov/mailpilot-go/internal/imap"
+	"github.com/Wangnov/mailpilot/internal/config"
+	"github.com/Wangnov/mailpilot/internal/imap"
 )
 
 // openaiProvider 调 OpenAI / 任意兼容端点，结构化输出(json_schema strict)。

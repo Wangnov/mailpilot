@@ -9,12 +9,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Wangnov/mailpilot-go/internal/analyze"
-	"github.com/Wangnov/mailpilot-go/internal/config"
-	"github.com/Wangnov/mailpilot-go/internal/imap"
-	"github.com/Wangnov/mailpilot-go/internal/notify"
-	"github.com/Wangnov/mailpilot-go/internal/ocr"
-	"github.com/Wangnov/mailpilot-go/internal/state"
+	"github.com/Wangnov/mailpilot/internal/analyze"
+	"github.com/Wangnov/mailpilot/internal/config"
+	"github.com/Wangnov/mailpilot/internal/imap"
+	"github.com/Wangnov/mailpilot/internal/notify"
+	"github.com/Wangnov/mailpilot/internal/ocr"
+	"github.com/Wangnov/mailpilot/internal/state"
 )
 
 // ToolCmd 是 agentic provider 在沙箱里调用的历史检索命令。

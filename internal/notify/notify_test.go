@@ -3,8 +3,8 @@ package notify
 import (
 	"testing"
 
-	"github.com/Wangnov/mailpilot-go/internal/analyze"
-	"github.com/Wangnov/mailpilot-go/internal/imap"
+	"github.com/Wangnov/mailpilot/internal/analyze"
+	"github.com/Wangnov/mailpilot/internal/imap"
 )
 
 func TestBuildMessageVerificationCode(t *testing.T) {

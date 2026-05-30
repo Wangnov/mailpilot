@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
-	"github.com/Wangnov/mailpilot-go/internal/imap"
+	"github.com/Wangnov/mailpilot/internal/config"
+	"github.com/Wangnov/mailpilot/internal/imap"
 )
 
 // ollamaProvider 本地模型，隐私优先零成本。用 format=schema 约束输出。

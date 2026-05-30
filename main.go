@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
-	"github.com/Wangnov/mailpilot-go/internal/imap"
-	"github.com/Wangnov/mailpilot-go/internal/pipeline"
+	"github.com/Wangnov/mailpilot/internal/config"
+	"github.com/Wangnov/mailpilot/internal/imap"
+	"github.com/Wangnov/mailpilot/internal/pipeline"
 	goimap "github.com/emersion/go-imap/v2"
 )
 

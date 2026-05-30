@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Wangnov/mailpilot-go/internal/config"
+	"github.com/Wangnov/mailpilot/internal/config"
 )
 
 type barkNotifier struct{ cfg config.Notifier }
