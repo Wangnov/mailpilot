@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"reflect"
 	"regexp"
 
 	"gopkg.in/yaml.v3"
@@ -67,21 +68,44 @@ type Config struct {
 
 var envRe = regexp.MustCompile(`\$\{([^}]+)\}`)
 
-// Load 读取 YAML，展开 ${ENV}，应用默认值。
+// Load 读取 YAML，解析后再在【字符串值】上展开 ${ENV}，最后应用默认值。
+// 在解析后展开（而非对原始文本替换）可避免密钥里的 YAML 特殊字符(: # " 换行)破坏解析。
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	data = envRe.ReplaceAllFunc(data, func(m []byte) []byte {
-		return []byte(os.Getenv(string(m[2 : len(m)-1])))
-	})
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, err
 	}
+	expandEnv(reflect.ValueOf(&c).Elem())
 	c.applyDefaults()
 	return &c, nil
+}
+
+// expandEnv 递归地把所有字符串字段里的 ${ENV} 替换为环境变量值。
+func expandEnv(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.Pointer:
+		if !v.IsNil() {
+			expandEnv(v.Elem())
+		}
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if f := v.Field(i); f.CanSet() {
+				expandEnv(f)
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			expandEnv(v.Index(i))
+		}
+	case reflect.String:
+		v.SetString(envRe.ReplaceAllStringFunc(v.String(), func(m string) string {
+			return os.Getenv(m[2 : len(m)-1])
+		}))
+	}
 }
 
 func (c *Config) applyDefaults() {

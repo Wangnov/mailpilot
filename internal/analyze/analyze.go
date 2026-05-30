@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/Wangnov/mailpilot/internal/config"
 	"github.com/Wangnov/mailpilot/internal/imap"
@@ -25,10 +26,16 @@ type Provider interface {
 	Analyze(m *imap.Mail, withHistory bool, toolCmd string) (*Analysis, error)
 }
 
-func BuildProvider(cfg config.Provider, timeout int, workdir string) (Provider, error) {
+// BuildProvider 构造一个 provider。workDir 是项目目录（含 config 的目录），
+// codex 的临时工作根目录取它下面的 .mailpilot-work/，确保 codex 产物只落在项目内。
+func BuildProvider(cfg config.Provider, timeout int, workDir string) (Provider, error) {
 	switch cfg.Type {
 	case "codex":
-		return &codexProvider{cfg: cfg, timeout: timeout, workdir: workdir}, nil
+		workRoot := ""
+		if workDir != "" {
+			workRoot = filepath.Join(workDir, ".mailpilot-work")
+		}
+		return &codexProvider{cfg: cfg, timeout: timeout, workRoot: workRoot}, nil
 	case "openai":
 		return &openaiProvider{cfg: cfg, timeout: timeout}, nil
 	case "ollama":

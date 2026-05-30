@@ -14,13 +14,17 @@ func (n *telegramNotifier) Name() string { return "telegram" }
 
 var tgEsc = regexp.MustCompile("([_*\\[\\]()`])")
 
+func tgMarkdown(s string) string { return tgEsc.ReplaceAllString(s, `\$1`) }
+
 func (n *telegramNotifier) Send(m Message) error {
 	if n.cfg.BotToken == "" || n.cfg.ChatID == "" {
 		return fmt.Errorf("telegram 缺少 bot_token/chat_id")
 	}
-	text := "*" + tgEsc.ReplaceAllString(m.Title, `\$1`) + "*\n" + m.Body
+	// 标题与正文都要转义：正文(摘要/要点)含 _ * [ ] ( ) ` 时
+	// 否则 parse_mode=Markdown 会整条 400 失败。
+	text := "*" + tgMarkdown(m.Title) + "*\n" + tgMarkdown(m.Body)
 	if m.URL != "" {
-		text += "\n[在 Gmail 打开](" + m.URL + ")"
+		text += "\n[在 Gmail 打开](" + m.URL + ")" // 我方可信链接，不转义
 	}
 	payload := map[string]any{
 		"chat_id": n.cfg.ChatID, "text": text, "parse_mode": "Markdown",

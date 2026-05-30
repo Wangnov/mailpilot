@@ -33,3 +33,25 @@ func TestLoadEnvExpandAndDefaults(t *testing.T) {
 		t.Errorf("default max_per_run=%d, want 20", c.Pipeline.MaxPerRun)
 	}
 }
+
+// 回归：密钥含 YAML 特殊字符(: # " 空格)时，解析后展开不应被破坏。
+func TestLoadEnvSpecialChars(t *testing.T) {
+	weird := `p:a#s s"w'd`
+	t.Setenv("MP_WEIRD", weird)
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	yaml := "imap:\n  user: a@b.com\n  password: ${MP_WEIRD}\n" +
+		"analyze:\n  providers:\n    - type: openai\n      api_key: ${MP_WEIRD}\n"
+	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("含特殊字符的密钥不应导致解析失败: %v", err)
+	}
+	if c.IMAP.Password != weird {
+		t.Errorf("password=%q, want %q", c.IMAP.Password, weird)
+	}
+	if c.Analyze.Providers[0].APIKey != weird {
+		t.Errorf("api_key=%q, want %q", c.Analyze.Providers[0].APIKey, weird)
+	}
+}

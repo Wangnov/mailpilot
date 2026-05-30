@@ -14,6 +14,9 @@ state.json
 *.log
 *.lock
 
+# codex 临时工作目录（项目内沙箱 + schema，随用随清）
+.mailpilot-work/
+
 # Go
 *.test
 *.out

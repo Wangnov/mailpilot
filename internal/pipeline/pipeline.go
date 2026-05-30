@@ -30,11 +30,12 @@ type Pipeline struct {
 }
 
 func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, error) {
+	// 项目目录 = 配置文件所在目录；codex 临时产物只落在它下面（详见 analyze.BuildProvider）。
 	abs, _ := filepath.Abs(configPath)
-	workdir := filepath.Dir(abs)
+	workDir := filepath.Dir(abs)
 	var providers []analyze.Provider
 	for _, pc := range cfg.Analyze.Providers {
-		p, err := analyze.BuildProvider(pc, cfg.Analyze.Timeout, workdir)
+		p, err := analyze.BuildProvider(pc, cfg.Analyze.Timeout, workDir)
 		if err != nil {
 			return nil, err
 		}
@@ -123,54 +124,43 @@ func (p *Pipeline) RunOnce() error {
 	}
 
 	last := p.st.LastUID
-	var newUIDs []uint32
-	for _, u := range all {
-		if u > last {
-			newUIDs = append(newUIDs, u)
-		}
-	}
-	var retry []uint32
-	for k, c := range p.st.Failed {
-		if c < p.cfg.Pipeline.MaxRetry {
-			if v, e := strconv.ParseUint(k, 10, 32); e == nil && allSet[uint32(v)] {
-				retry = append(retry, uint32(v))
-			}
-		}
-	}
-	todo := mergeSorted(newUIDs, retry)
-	if len(todo) == 0 {
+	todo, newCount, retryCount, total := planTodo(
+		all, allSet, last, p.st.Failed, p.cfg.Pipeline.MaxPerRun, p.cfg.Pipeline.MaxRetry)
+	if total == 0 {
 		p.log("无新邮件。")
 		return nil
 	}
-	if len(todo) > p.cfg.Pipeline.MaxPerRun {
-		p.log(fmt.Sprintf("待处理 %d 封超上限 %d，本次先处理最新 %d 封。",
-			len(todo), p.cfg.Pipeline.MaxPerRun, p.cfg.Pipeline.MaxPerRun))
-		todo = todo[len(todo)-p.cfg.Pipeline.MaxPerRun:]
+	if total > p.cfg.Pipeline.MaxPerRun {
+		p.log(fmt.Sprintf("待处理 %d 封超上限 %d，本次先处理最旧 %d 封，其余下轮继续。",
+			total, p.cfg.Pipeline.MaxPerRun, p.cfg.Pipeline.MaxPerRun))
 	}
-	p.log(fmt.Sprintf("待处理 %d 封（新 %d / 重试 %d）", len(todo), len(newUIDs), len(retry)))
+	p.log(fmt.Sprintf("待处理 %d 封（新 %d / 重试 %d）", len(todo), newCount, retryCount))
 
+	// 携带失败计数前推，顺手剔除已不在邮箱内(被删)的死条目。
 	failed := make(map[string]int, len(p.st.Failed))
 	for k, v := range p.st.Failed {
-		failed[k] = v
+		if vv, e := strconv.ParseUint(k, 10, 32); e == nil && allSet[uint32(vv)] {
+			failed[k] = v
+		}
 	}
 	for _, uid := range todo {
 		key := strconv.Itoa(int(uid))
 		if err := p.processOne(uid); err != nil {
 			failed[key]++
-			p.log(fmt.Sprintf("✗ uid=%d 处理失败(第%d次): %s", uid, failed[key], err.Error()))
+			if failed[key] >= p.cfg.Pipeline.MaxRetry {
+				p.log(fmt.Sprintf("✗ uid=%d 第%d次失败，已达上限放弃: %s", uid, failed[key], err.Error()))
+				delete(failed, key) // 放弃重试，避免死条目无限堆积
+			} else {
+				p.log(fmt.Sprintf("✗ uid=%d 处理失败(第%d次，将重试): %s", uid, failed[key], err.Error()))
+			}
 		} else {
 			delete(failed, key)
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
 
-	newMax := last
-	for _, u := range newUIDs {
-		if u > newMax {
-			newMax = u
-		}
-	}
-	p.st.LastUID = newMax
+	// 水位线只推进到本轮 todo 里实际覆盖的最大 uid（retry 的旧 uid < last 不影响）。
+	p.st.LastUID = advanceWatermark(todo, last)
 	p.st.Failed = failed
 	p.st.UIDValidity = uidv
 	_ = p.st.Save()
@@ -203,6 +193,42 @@ func (p *Pipeline) Daemon() error {
 		p.log(msg + "，10s 后重连")
 		time.Sleep(10 * time.Second)
 	}
+}
+
+// planTodo 计算本轮待处理 uid：新邮件(uid>last) ∪ 可重试的失败 uid，升序排列、
+// 最旧优先(FIFO)、截断到 maxPerRun。total 是未截断前的总数(供日志)。
+// 截断保留【最旧】的 N 封，配合 advanceWatermark 保证超限的较新邮件留待下轮、绝不丢弃。
+func planTodo(all []uint32, allSet map[uint32]bool, last uint32, failed map[string]int, maxPerRun, maxRetry int) (todo []uint32, newCount, retryCount, total int) {
+	var newUIDs, retry []uint32
+	for _, u := range all {
+		if u > last {
+			newUIDs = append(newUIDs, u)
+		}
+	}
+	for k, c := range failed {
+		if c < maxRetry {
+			if v, e := strconv.ParseUint(k, 10, 32); e == nil && allSet[uint32(v)] {
+				retry = append(retry, uint32(v))
+			}
+		}
+	}
+	todo = mergeSorted(newUIDs, retry)
+	total = len(todo)
+	if maxPerRun > 0 && total > maxPerRun {
+		todo = todo[:maxPerRun] // 最旧优先
+	}
+	return todo, len(newUIDs), len(retry), total
+}
+
+// advanceWatermark 把水位线推进到 todo 内最大的 uid（但不低于原 last）。
+func advanceWatermark(todo []uint32, last uint32) uint32 {
+	nm := last
+	for _, u := range todo {
+		if u > nm {
+			nm = u
+		}
+	}
+	return nm
 }
 
 func mergeSorted(a, b []uint32) []uint32 {

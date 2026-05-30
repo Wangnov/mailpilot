@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wangnov/mailpilot/internal/config"
 	"github.com/emersion/go-imap/v2"
@@ -179,7 +180,7 @@ func parseMail(uid uint32, raw []byte, maxBody int) *Mail {
 	m := &Mail{UID: uid}
 	mr, err := mail.CreateReader(bytes.NewReader(raw))
 	if err != nil {
-		m.Body = stripURLs(string(raw))
+		m.Body = clip(stripURLs(string(raw)), maxBody) // 非 MIME 回退也要截断，防超大原文
 		return m
 	}
 	if s, err := mr.Header.Subject(); err == nil {
@@ -230,14 +231,26 @@ func parseMail(uid uint32, raw []byte, maxBody int) *Mail {
 	if body == "" {
 		body = stripHTML(html.String())
 	}
-	body = stripURLs(body)
-	if maxBody > 0 && len(body) > maxBody {
-		body = body[:maxBody]
-	}
-	m.Body = body
+	m.Body = clip(stripURLs(body), maxBody)
 	return m
 }
 
 func stripURLs(s string) string {
 	return strings.TrimSpace(urlRe.ReplaceAllString(s, "[链接]"))
+}
+
+// clip 按字节上限截断，并回退到合法 UTF-8 边界（不切碎多字节中文字符）。
+func clip(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+	s = s[:maxBytes]
+	for len(s) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(s); r == utf8.RuneError && size <= 1 {
+			s = s[:len(s)-1] // 去掉被截断的半个字符
+		} else {
+			break
+		}
+	}
+	return s
 }

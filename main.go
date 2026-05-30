@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,10 +24,15 @@ const configTemplate = `imap:
   force_ipv4: true
 
 analyze:
-  providers:                      # 按序尝试，失败/限流自动降级
-    - type: openai                # 或 codex(ChatGPT 订阅) / ollama(本地)
+  providers:                      # 按序尝试，失败/限流自动降级到下一个
+    - type: openai                # OpenAI 或任意兼容端点(可加 base_url)
       model: gpt-4o-mini
       api_key: ${OPENAI_API_KEY}
+    # - type: codex               # ChatGPT 订阅(本机需装 codex CLI)，省 API 费但可能限流
+    #   model: gpt-5.3-codex-spark
+    # - type: ollama              # 本地模型，隐私优先零成本(单轮，无 agentic 历史)
+    #   model: qwen2.5
+    #   base_url: http://localhost:11434
   timeout: 300
 
 ocr:
@@ -87,6 +93,10 @@ func main() {
 }
 
 func loadCfg(path string) *config.Config {
+	// 用绝对路径，确保 codex/openai 派生的 tool-search 子进程无论 CWD 如何都能定位配置。
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	_ = os.Setenv("MAILPILOT_CONFIG", path)
 	cfg, err := config.Load(path)
 	if err != nil {
