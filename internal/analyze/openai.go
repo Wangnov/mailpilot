@@ -33,6 +33,10 @@ func (p *openaiProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string)
 		{"role": "user", "content": buildStdin(m)},
 	}
 	if withHistory {
+		messages = append(messages, map[string]any{
+			"role":    "system",
+			"content": "这封邮件可能是某讨论串/issue/PR 的后续。请先调用 mail_search 工具检索相关历史邮件（例如 action=search query=\"subject:关键词\"，或 action=thread query=该邮件uid），读懂来龙去脉后再分析。",
+		})
 		messages = p.agentLoop(messages)
 	}
 	return p.finalStructured(messages)
@@ -54,6 +58,7 @@ func (p *openaiProvider) agentLoop(messages []map[string]any) []map[string]any {
 			break // 模型不再检索，进入最终结构化
 		}
 		for _, tc := range calls {
+			fmt.Fprintf(os.Stderr, "[openai agent] 第%d轮检索: %s\n", round+1, tc.argsJSON)
 			messages = append(messages, map[string]any{
 				"role": "tool", "tool_call_id": tc.id, "content": execToolSearch(tc.argsJSON),
 			})
