@@ -44,6 +44,8 @@ func BuildProvider(cfg config.Provider, timeout int, workDir, language string) (
 		return &openaiProvider{cfg: cfg, timeout: timeout, language: language}, nil
 	case "ollama":
 		return &ollamaProvider{cfg: cfg, timeout: timeout, language: language}, nil
+	case "gemini":
+		return newGeminiProvider(cfg, timeout, language)
 	}
 	return nil, fmt.Errorf("未知 provider 类型: %s", cfg.Type)
 }

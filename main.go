@@ -33,6 +33,9 @@ analyze:
     # - type: ollama              # 本地模型，隐私优先零成本(单轮，无 agentic 历史)
     #   model: qwen2.5
     #   base_url: http://localhost:11434
+    # - type: gemini              # Google Gemini(官方 Go SDK，单轮)
+    #   model: gemini-3.1-flash-lite
+    #   api_key: ${GEMINI_API_KEY}
   timeout: 300
   language: 中文                  # 通知语言：中文 / English / 日本語…；auto=随邮件本身语言
 

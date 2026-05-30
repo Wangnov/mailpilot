@@ -41,7 +41,7 @@
 
 - 📦 **单静态二进制** — `go build` 出一个文件；`make cross` 出 linux/amd64·arm64、darwin/arm64…
 - ⚡ **实时** — IMAP IDLE（goroutine），秒级而非轮询
-- 🧠 **多 provider 自动降级** — `codex`（订阅）→ `openai`/兼容端点 → `ollama`（本地）
+- 🧠 **多 provider 自动降级** — `codex`（订阅）→ `openai`/兼容端点 → `gemini` → `ollama`（本地）
 - 🔎 **每个有能力的 provider 都能做 agentic 历史检索** — 当邮件像是某讨论串 / issue 的后续时，模型可自主先检索相关历史邮件再作答。`codex` 用它自己的 agent loop；`openai` 用**内置 function-calling 循环**（不挂 LangChain，约一个文件）。降级到 `openai` 也不丢历史上下文。
 - 🖼️ **图片邮件 OCR** — 正文为空的纯图片邮件 → 先过 PaddleOCR 再分析
 - 📱 **智能多渠道推送** — 紧急→破防+声音，垃圾/营销→静默，验证码→可复制，点按→在 Gmail 打开，按分类归组
@@ -126,6 +126,9 @@ analyze:
     # - type: ollama             # 全本地、隐私、零成本
     #   model: qwen2.5
     #   base_url: http://localhost:11434
+    # - type: gemini             # Google Gemini(官方 Go SDK)
+    #   model: gemini-3.1-flash-lite
+    #   api_key: ${GEMINI_API_KEY}
   timeout: 300
   language: 中文                 # 通知语言：中文 / English / 日本語…；auto=随邮件本身语言
 
@@ -159,6 +162,7 @@ pipeline:
 - **`codex`** — 你的 ChatGPT 订阅，经 Codex CLI（`codex exec`）。省 API 费但可能被限流，**永远把 `openai`/`ollama` 排在它后面**。agentic 走 codex 自己的 loop，调用 `mailpilot tool-search`。运行**被收进项目内一次性沙箱**：`--ephemeral`（不往 `~/.codex` 落 session）、临时产物只在 `<config 目录>/.mailpilot-work/` 且随用随清、只用临时 `-c`/`-m` 覆盖 —— 绝不改你的 `~/.codex/config.toml`，也不写系统 `/tmp` 或家目录（Linux / macOS 同此）。
 - **`openai`** — OpenAI 或任意兼容端点（`base_url`）。**用内置 function-calling 循环做 agentic 历史检索**：模型多轮调用 `mail_search`，最后一次 json-schema 强约束出结构化结果。可靠的主力。
 - **`ollama`** — 全本地、私有、零成本。单轮（本地模型工具调用能力参差）；要 agentic 历史用 `openai`/`codex`。
+- **`gemini`** — Google Gemini，官方 Go SDK（原生格式），结构化输出走 `responseSchema`，`api_key` 填 Gemini API key。单轮（无 agentic 历史）。
 
 ### 🔎 Agentic 历史检索（不挂框架）
 
@@ -220,7 +224,7 @@ One static binary you `scp` and run — **no Python / pip / venv on the target h
 
 - 📦 **Single static binary** — `go build` → one file; `make cross` → linux/amd64·arm64, darwin/arm64…
 - ⚡ **Real-time** — IMAP IDLE (goroutine), seconds not polling
-- 🧠 **Multi-provider with fallback** — `codex` (subscription) → `openai`/compatible → `ollama` (local)
+- 🧠 **Multi-provider with fallback** — `codex` (subscription) → `openai`/compatible → `gemini` → `ollama` (local)
 - 🔎 **Agentic history lookup, on every capable provider** — when a mail looks like a thread/issue reply, the model can autonomously search related past mail before answering. `codex` uses its own agent loop; `openai` uses a **built-in function-calling loop** (no LangChain, ~one file). So you don't lose history context when falling back off `codex`.
 - 🖼️ **Image emails OCR'd** — empty-body image mail → PaddleOCR before analysis
 - 📱 **Smart multi-channel push** — urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category
@@ -305,6 +309,9 @@ analyze:
     # - type: ollama             # fully local, private, zero-cost
     #   model: qwen2.5
     #   base_url: http://localhost:11434
+    # - type: gemini             # Google Gemini (official Go SDK)
+    #   model: gemini-3.1-flash-lite
+    #   api_key: ${GEMINI_API_KEY}
   timeout: 300
   language: English             # notification language: 中文 / English / 日本語…; auto = match the email
 
@@ -338,6 +345,7 @@ pipeline:
 - **`codex`** — your ChatGPT subscription via the Codex CLI (`codex exec`). Saves API spend but can be rate-limited — **always put `openai`/`ollama` after it**. Agentic via codex's own loop, calling `mailpilot tool-search`. Runs **confined**: `--ephemeral` (no session files in `~/.codex`), temp artifacts only under `<config-dir>/.mailpilot-work/` and auto-cleaned, only ephemeral `-c`/`-m` overrides — it never edits your `~/.codex/config.toml` nor writes to system `/tmp` or your home dir (Linux & macOS alike).
 - **`openai`** — OpenAI or any compatible endpoint (`base_url`). **Does agentic history search via a built-in function-calling loop**: the model calls `mail_search` over several rounds, then a final json-schema call produces strict structured output. The reliable workhorse.
 - **`ollama`** — fully local, private, zero-cost. Single-shot (local models' tool-calling varies); use `openai`/`codex` for agentic history.
+- **`gemini`** — Google Gemini via the official Go SDK (native format); structured output through `responseSchema`, put your Gemini API key in `api_key`. Single-shot (no agentic history).
 
 ### 🔎 How agentic history works (no framework)
 
