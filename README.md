@@ -19,7 +19,7 @@ Cloudflare Workers can't host this: `codex` needs subprocesses and IMAP IDLE wan
 - 🖼️ **Image emails OCR'd** — empty-body image mail → PaddleOCR before analysis
 - 📱 **Smart multi-channel push** — urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category
 - ♻️ **Reliable** — dedup watermark + retry queue + first-run baseline + IDLE auto-reconnect
-- 🔒 **Safe** — read-only IMAP, body treated as untrusted, prompt-injection hardened
+- 🔒 **Safe** — read-only IMAP, body treated as untrusted, prompt-injection hardened; `codex` runs confined to a throwaway project-local sandbox (`--ephemeral`, never touches your `~/.codex`)
 
 ## Install
 
@@ -93,7 +93,7 @@ sudo journalctl -u mailpilot -f
 
 ## Providers
 
-- **`codex`** — your ChatGPT subscription via the Codex CLI (shells out to `codex exec`). Saves API spend but can be rate-limited — always put `openai`/`ollama` after it. Agentic via codex's own loop, calling `mailpilot tool-search`.
+- **`codex`** — your ChatGPT subscription via the Codex CLI (shells out to `codex exec`). Saves API spend but can be rate-limited — always put `openai`/`ollama` after it. Agentic via codex's own loop, calling `mailpilot tool-search`. Runs **confined**: a throwaway per-run sandbox under `<config-dir>/.mailpilot-work/` (auto-cleaned), `--ephemeral` so no session files pile up in `~/.codex`, and only ephemeral `-c`/`-m` overrides — it never edits your `~/.codex/config.toml` nor writes to system `/tmp` or your home dir (Linux & macOS alike).
 - **`openai`** — OpenAI or any compatible endpoint (`base_url`). **Does agentic history search via a built-in function-calling loop**: the model can call `mail_search` over several rounds, then a final json-schema call produces strict structured output. The reliable workhorse.
 - **`ollama`** — fully local, private, zero-cost. Single-shot (local models' tool-calling varies); use `openai`/`codex` for agentic history.
 
@@ -103,7 +103,7 @@ sudo journalctl -u mailpilot -f
 
 ## Security
 
-Read-only IMAP (App Password, never sends/deletes); email bodies treated as **untrusted** (URLs stripped, wrapped, prompt forbids executing any in-body instructions); `codex` runs sandboxed. All credentials revocable.
+Read-only IMAP (App Password, never sends/deletes); email bodies treated as **untrusted** (URLs stripped, wrapped, prompt forbids executing any in-body instructions). The `codex` subprocess is **confined to the project**: a fresh per-run sandbox dir (writes can't reach your `config.yaml`/`.env`), `--ephemeral` so nothing accumulates in `~/.codex`, your codex config left untouched, and zero footprint in system temp or your home dir. All credentials revocable.
 
 ## License
 
