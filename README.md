@@ -67,6 +67,45 @@ mailpilot daemon               # 常驻 IMAP IDLE（实时）
 
 > 首次运行只记录水位线，**不会**把你的存量邮件全推一遍。
 
+### 📮 去哪拿邮箱 IMAP 授权码？
+
+各家邮箱**不能直接用登录密码**，要单独生成「应用专用密码 / 授权码」，再填进 `config.yaml` 的 `imap.password`。点开你的邮箱：
+
+<details>
+<summary><b>Gmail</b> &nbsp;·&nbsp; <code>imap.gmail.com</code></summary>
+
+1. 开启两步验证：[myaccount.google.com](https://myaccount.google.com) → 安全性 → 两步验证
+2. 生成应用专用密码：安全性 → 应用专用密码 → 选「邮件」→ 生成 → 复制那 16 位
+3. 确认 IMAP 已开：Gmail 设置 → 「转发和 POP/IMAP」→ 启用 IMAP
+4. 把 16 位填进 `password`（空格可留可去），`host: imap.gmail.com`
+</details>
+
+<details>
+<summary><b>QQ 邮箱</b> &nbsp;·&nbsp; <code>imap.qq.com</code></summary>
+
+1. 网页版 → 设置 → 账户 → 找到「POP3/IMAP/SMTP… 服务」
+2. 开启 **IMAP/SMTP 服务**，按提示发一条短信验证
+3. 拿到**授权码**（不是 QQ 密码）填进 `password`，`host: imap.qq.com`
+</details>
+
+<details>
+<summary><b>163 / 126 邮箱</b> &nbsp;·&nbsp; <code>imap.163.com</code></summary>
+
+1. 网页版 → 设置 → 「POP3/SMTP/IMAP」
+2. 开启 **IMAP/SMTP 服务**，设置一个**客户端授权密码**
+3. 授权密码填 `password`，`host: imap.163.com`（126 用 `imap.126.com`）
+</details>
+
+<details>
+<summary><b>Outlook / Microsoft 365</b> &nbsp;·&nbsp; <code>outlook.office365.com</code></summary>
+
+1. 开启两步验证：[account.microsoft.com/security](https://account.microsoft.com/security)
+2. 高级安全选项 → 应用密码 → 新建 → 复制
+3. 应用密码填 `password`，`host: outlook.office365.com`
+</details>
+
+> 拿到后建议放进环境变量（`export IMAP_PASSWORD=...`）再用 `${IMAP_PASSWORD}` 引用，别明文写进 `config.yaml`。
+
 ### ⚙️ 配置
 
 ```yaml
@@ -88,6 +127,7 @@ analyze:
     #   model: qwen2.5
     #   base_url: http://localhost:11434
   timeout: 300
+  language: 中文                 # 通知语言：中文 / English / 日本語…；auto=随邮件本身语言
 
 ocr:
   enabled: true
@@ -108,6 +148,7 @@ notify:
 pipeline:
   baseline_on_first_run: true
   history_search: true
+  # skip_categories: [垃圾, 营销推广]   # 命中的分类只分析、不推送；默认全部推送
 ```
 
 `${ENV}` 在 YAML **解析后**对字符串字段展开，因此密钥里含 `: # "` 等特殊字符也不会破坏解析。
@@ -125,6 +166,10 @@ pipeline:
 ### 📱 推送
 
 按分析结果智能映射渠道能力：紧急→破防+声音、垃圾→静默、验证码→可复制、点按→在 Gmail 打开、按分类归组。开箱支持 **Bark / Telegram / ntfy / Webhook**（Webhook 兼容企业微信 / Slack 纯文本字段）。Bark 默认用 mailpilot 的 logo 作推送图标，可用 `notify[].icon` 改 URL，或设为空串关闭。
+
+**垃圾 / 营销邮件**：`垃圾`、`营销推广`、`低` 默认走**静音**推送（仍进通知中心、不响铃）；想彻底不推某些分类，配 `pipeline.skip_categories: [垃圾, 营销推广]`（这些邮件仍会被分析，只是不推）。注意 Gmail 自带的垃圾邮件本就不在 `INBOX`，我们也扫不到。
+
+**通知语言**：正文（摘要 / 要点 / 建议）的语言由 `analyze.language` 决定，默认 `中文`，可设 `English` / `日本語` 等，或 `auto`(随邮件本身语言)。`category` / `urgency` 是供逻辑判断的稳定枚举键（保持中文），与显示语言无关。
 
 ### 🚢 部署
 
@@ -198,6 +243,45 @@ mailpilot daemon               # stay resident on IMAP IDLE (real-time)
 
 > First run only records a watermark and does **not** push your existing backlog.
 
+### 📮 Where to get your IMAP password
+
+Most providers **don't accept your login password** — generate a dedicated "app password / authorization code" and put it in `imap.password`. Expand your provider:
+
+<details>
+<summary><b>Gmail</b> &nbsp;·&nbsp; <code>imap.gmail.com</code></summary>
+
+1. Enable 2-Step Verification: [myaccount.google.com](https://myaccount.google.com) → Security → 2-Step Verification
+2. Generate an App Password: Security → App passwords → pick "Mail" → Generate → copy the 16 chars
+3. Make sure IMAP is on: Gmail Settings → "Forwarding and POP/IMAP" → Enable IMAP
+4. Put the 16 chars in `password` (spaces optional), `host: imap.gmail.com`
+</details>
+
+<details>
+<summary><b>QQ Mail</b> &nbsp;·&nbsp; <code>imap.qq.com</code></summary>
+
+1. Web UI → Settings → Account → find "POP3/IMAP/SMTP… service"
+2. Enable **IMAP/SMTP**, verify by SMS as prompted
+3. Use the generated **authorization code** (not your QQ password) as `password`, `host: imap.qq.com`
+</details>
+
+<details>
+<summary><b>163 / 126 Mail</b> &nbsp;·&nbsp; <code>imap.163.com</code></summary>
+
+1. Web UI → Settings → "POP3/SMTP/IMAP"
+2. Enable **IMAP/SMTP**, set a **client authorization password**
+3. Use that auth password as `password`, `host: imap.163.com` (126 uses `imap.126.com`)
+</details>
+
+<details>
+<summary><b>Outlook / Microsoft 365</b> &nbsp;·&nbsp; <code>outlook.office365.com</code></summary>
+
+1. Enable 2-step verification: [account.microsoft.com/security](https://account.microsoft.com/security)
+2. Advanced security options → App passwords → Create → copy
+3. Use the app password as `password`, `host: outlook.office365.com`
+</details>
+
+> Prefer an env var (`export IMAP_PASSWORD=...`) referenced via `${IMAP_PASSWORD}` over hardcoding it in `config.yaml`.
+
 ### ⚙️ Configuration
 
 ```yaml
@@ -219,6 +303,7 @@ analyze:
     #   model: qwen2.5
     #   base_url: http://localhost:11434
   timeout: 300
+  language: English             # notification language: 中文 / English / 日本語…; auto = match the email
 
 ocr:
   enabled: true
@@ -239,6 +324,7 @@ notify:
 pipeline:
   baseline_on_first_run: true
   history_search: true
+  # skip_categories: [垃圾, 营销推广]   # only analyze, don't push these categories; default pushes all
 ```
 
 `${ENV}` is expanded on parsed string fields **after** YAML parsing, so secrets containing `: # "` etc. can't break parsing.
@@ -256,6 +342,10 @@ pipeline:
 ### 📱 Push
 
 Channel capabilities are mapped from the analysis: urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category. Ships with **Bark / Telegram / ntfy / Webhook** (the Webhook payload is compatible with WeCom / Slack plain-text fields). Bark uses the mailpilot logo as the default push icon — override the URL via `notify[].icon`, or set an empty string to disable.
+
+**Spam / marketing:** `垃圾`, `营销推广`, and `低` default to **silent** pushes (still in Notification Center, no alert); to drop certain categories entirely, set `pipeline.skip_categories: [垃圾, 营销推广]` (those mails are still analyzed, just not pushed). Note Gmail's own spam never reaches `INBOX`, so we don't see it anyway.
+
+**Notification language:** the free text (summary / key points / action) follows `analyze.language` (default `中文`; set `English` / `日本語`, or `auto` to match the email). `category` / `urgency` are stable internal enum keys (kept in Chinese for the matching logic) and are independent of the display language.
 
 ### 🚢 Deploy
 

@@ -35,7 +35,7 @@ func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, er
 	workDir := filepath.Dir(abs)
 	var providers []analyze.Provider
 	for _, pc := range cfg.Analyze.Providers {
-		p, err := analyze.BuildProvider(pc, cfg.Analyze.Timeout, workDir)
+		p, err := analyze.BuildProvider(pc, cfg.Analyze.Timeout, workDir, cfg.Analyze.Language)
 		if err != nil {
 			return nil, err
 		}
@@ -89,11 +89,25 @@ func (p *Pipeline) processOne(uid uint32) error {
 	if err != nil {
 		return err
 	}
+	if skipCategory(a.Category, p.cfg.Pipeline.SkipCategories) {
+		p.log(fmt.Sprintf("· uid=%d 分类[%s] 命中忽略规则，跳过推送", uid, a.Category))
+		return nil // 已成功分析、仅按规则不推送：算处理完成，水位线照常推进
+	}
 	if !notify.NotifyAll(p.notifiers, mail, a, p.log) {
 		return fmt.Errorf("部分通知渠道失败")
 	}
 	p.log(fmt.Sprintf("✓ uid=%d 已推送 [%s/%s]", uid, a.Category, a.Urgency))
 	return nil
+}
+
+// skipCategory 判断某分类是否在「只分析不推送」忽略名单内。
+func skipCategory(category string, skip []string) bool {
+	for _, s := range skip {
+		if s == category {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Pipeline) RunOnce() error {

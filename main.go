@@ -34,6 +34,7 @@ analyze:
     #   model: qwen2.5
     #   base_url: http://localhost:11434
   timeout: 300
+  language: 中文                  # 通知语言：中文 / English / 日本語…；auto=随邮件本身语言
 
 ocr:
   enabled: false                  # 需要图片邮件识别再开
@@ -47,6 +48,7 @@ notify:
 pipeline:
   baseline_on_first_run: true
   history_search: true
+  # skip_categories: [垃圾, 营销推广]   # 命中的分类只分析、不推送；默认全部推送
 `
 
 // version 由 release 构建经 -ldflags "-X main.version=<tag>" 注入。

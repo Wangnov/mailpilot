@@ -21,13 +21,14 @@ type codexProvider struct {
 	cfg      config.Provider
 	timeout  int
 	workRoot string // 项目内的 codex 临时工作根目录（由 BuildProvider 注入）
+	language string // 通知自由文本的输出语言
 }
 
-func (p *codexProvider) Name() string       { return "codex:" + p.cfg.Model }
+func (p *codexProvider) Name() string        { return "codex:" + p.cfg.Model }
 func (p *codexProvider) SupportsTools() bool { return true }
 
 func (p *codexProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) (*Analysis, error) {
-	prompt := buildPrompt(withHistory, toolCmd, m.UID)
+	prompt := buildPrompt(withHistory, toolCmd, m.UID, p.language)
 
 	// 所有临时产物都放在项目内的 workRoot 下并在结束后清理；绝不写系统 /tmp / 家目录 / ~/.codex。
 	// workRoot 必须由调用方注入（BuildProvider 取项目目录下的 .mailpilot-work）——

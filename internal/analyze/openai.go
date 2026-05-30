@@ -18,18 +18,19 @@ import (
 // openaiProvider 调 OpenAI / 任意兼容端点。withHistory 时跑 function-calling
 // agent loop（多轮 tool_call→执行→回灌），最后一次强制 json_schema 结构化输出。
 type openaiProvider struct {
-	cfg     config.Provider
-	timeout int
+	cfg      config.Provider
+	timeout  int
+	language string
 }
 
-func (p *openaiProvider) Name() string       { return "openai:" + p.cfg.Model }
+func (p *openaiProvider) Name() string        { return "openai:" + p.cfg.Model }
 func (p *openaiProvider) SupportsTools() bool { return true }
 
 const maxToolRounds = 4
 
 func (p *openaiProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) (*Analysis, error) {
 	messages := []map[string]any{
-		{"role": "system", "content": SystemPrompt},
+		{"role": "system", "content": systemPromptFor(p.language)},
 		{"role": "user", "content": buildStdin(m)},
 	}
 	if withHistory {

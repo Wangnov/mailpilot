@@ -27,6 +27,7 @@ type Provider struct {
 type Analyze struct {
 	Providers []Provider `yaml:"providers"`
 	Timeout   int        `yaml:"timeout"`
+	Language  string     `yaml:"language"` // 通知正文(摘要/要点/建议)的输出语言，如 中文 / English / 日本語；auto=随邮件语言
 }
 
 type OCR struct {
@@ -50,13 +51,14 @@ type Notifier struct {
 }
 
 type Pipeline struct {
-	BaselineOnFirstRun bool   `yaml:"baseline_on_first_run"`
-	HistorySearch      bool   `yaml:"history_search"`
-	MaxPerRun          int    `yaml:"max_per_run"`
-	MaxRetry           int    `yaml:"max_retry"`
-	IdleTimeout        int    `yaml:"idle_timeout"`
-	MaxBodyChars       int    `yaml:"max_body_chars"`
-	StatePath          string `yaml:"state_path"`
+	BaselineOnFirstRun bool     `yaml:"baseline_on_first_run"`
+	HistorySearch      bool     `yaml:"history_search"`
+	MaxPerRun          int      `yaml:"max_per_run"`
+	MaxRetry           int      `yaml:"max_retry"`
+	IdleTimeout        int      `yaml:"idle_timeout"`
+	MaxBodyChars       int      `yaml:"max_body_chars"`
+	StatePath          string   `yaml:"state_path"`
+	SkipCategories     []string `yaml:"skip_categories"` // 命中这些分类的邮件只分析、不推送(如 [垃圾, 营销推广])；空=全部推送
 }
 
 type Config struct {
@@ -123,6 +125,7 @@ func (c *Config) applyDefaults() {
 	d(&c.IMAP.Host, "imap.gmail.com")
 	d(&c.IMAP.Mailbox, "INBOX")
 	di(&c.Analyze.Timeout, 300)
+	d(&c.Analyze.Language, "中文")
 	d(&c.OCR.Model, "PaddleOCR-VL-1.6")
 	d(&c.OCR.JobURL, "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs")
 	di(&c.OCR.MinBody, 30)

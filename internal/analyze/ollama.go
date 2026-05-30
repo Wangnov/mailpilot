@@ -15,11 +15,12 @@ import (
 
 // ollamaProvider 本地模型，隐私优先零成本。用 format=schema 约束输出。
 type ollamaProvider struct {
-	cfg     config.Provider
-	timeout int
+	cfg      config.Provider
+	timeout  int
+	language string
 }
 
-func (p *ollamaProvider) Name() string       { return "ollama:" + p.cfg.Model }
+func (p *ollamaProvider) Name() string        { return "ollama:" + p.cfg.Model }
 func (p *ollamaProvider) SupportsTools() bool { return false }
 
 func (p *ollamaProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) (*Analysis, error) {
@@ -31,7 +32,7 @@ func (p *ollamaProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string)
 	body := map[string]any{
 		"model": p.cfg.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": SystemPrompt + "\n只输出符合要求的 JSON。"},
+			{"role": "system", "content": systemPromptFor(p.language) + "\n只输出符合要求的 JSON。"},
 			{"role": "user", "content": buildStdin(m)},
 		},
 		"stream": false,

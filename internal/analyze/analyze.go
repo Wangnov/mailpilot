@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/Wangnov/mailpilot/internal/config"
 	"github.com/Wangnov/mailpilot/internal/imap"
@@ -28,18 +29,19 @@ type Provider interface {
 
 // BuildProvider 构造一个 provider。workDir 是项目目录（含 config 的目录），
 // codex 的临时工作根目录取它下面的 .mailpilot-work/，确保 codex 产物只落在项目内。
-func BuildProvider(cfg config.Provider, timeout int, workDir string) (Provider, error) {
+// language 是通知自由文本的输出语言。
+func BuildProvider(cfg config.Provider, timeout int, workDir, language string) (Provider, error) {
 	switch cfg.Type {
 	case "codex":
 		workRoot := ""
 		if workDir != "" {
 			workRoot = filepath.Join(workDir, ".mailpilot-work")
 		}
-		return &codexProvider{cfg: cfg, timeout: timeout, workRoot: workRoot}, nil
+		return &codexProvider{cfg: cfg, timeout: timeout, workRoot: workRoot, language: language}, nil
 	case "openai":
-		return &openaiProvider{cfg: cfg, timeout: timeout}, nil
+		return &openaiProvider{cfg: cfg, timeout: timeout, language: language}, nil
 	case "ollama":
-		return &ollamaProvider{cfg: cfg, timeout: timeout}, nil
+		return &ollamaProvider{cfg: cfg, timeout: timeout, language: language}, nil
 	}
 	return nil, fmt.Errorf("未知 provider 类型: %s", cfg.Type)
 }
@@ -73,7 +75,7 @@ var OutputSchema = map[string]any{
 	"properties": map[string]any{
 		"category":         map[string]any{"type": "string", "enum": []string{"工作", "财务", "账单", "营销推广", "通知", "个人", "验证码", "垃圾", "其他"}},
 		"urgency":          map[string]any{"type": "string", "enum": []string{"高", "中", "低"}},
-		"summary":          map[string]any{"type": "string", "description": "一句话中文摘要，不超过 50 字"},
+		"summary":          map[string]any{"type": "string", "description": "一句话摘要，不超过 50 字；语言遵从系统提示的【输出语言】"},
 		"needs_reply":      map[string]any{"type": "boolean"},
 		"key_points":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"suggested_action": map[string]any{"type": "string"},
@@ -100,8 +102,23 @@ const HistoryHint = `
 - 查看某封正文： {tool} get <uid>
 请先检索读懂上下文，再让 summary / key_points 反映完整脉络。`
 
-func buildPrompt(withHistory bool, toolCmd string, uid uint32) string {
-	p := SystemPrompt
+// languageClause 指示模型用哪种语言输出自由文本字段（category/urgency 枚举仍按 schema 原样输出）。
+func languageClause(language string) string {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "", "auto", "自动":
+		return "\n\n【输出语言】summary、key_points、suggested_action 请用【这封邮件本身的主要语言】书写；category、urgency 按 schema 的枚举值原样输出（保持中文枚举键）。"
+	default:
+		return fmt.Sprintf("\n\n【输出语言】summary、key_points、suggested_action 必须用「%s」书写；category、urgency 按 schema 的枚举值原样输出（保持中文枚举键）。", language)
+	}
+}
+
+// systemPromptFor 返回带【输出语言】指令的系统提示。
+func systemPromptFor(language string) string {
+	return SystemPrompt + languageClause(language)
+}
+
+func buildPrompt(withHistory bool, toolCmd string, uid uint32, language string) string {
+	p := systemPromptFor(language)
 	if withHistory && toolCmd != "" {
 		h := HistoryHint
 		h = replaceAll(h, "{tool}", toolCmd)

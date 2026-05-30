@@ -82,6 +82,19 @@ func TestPlanTodoMaxRetryExhausted(t *testing.T) {
 	}
 }
 
+func TestSkipCategory(t *testing.T) {
+	skip := []string{"垃圾", "营销推广"}
+	if !skipCategory("垃圾", skip) || !skipCategory("营销推广", skip) {
+		t.Error("命中名单的分类应被跳过")
+	}
+	if skipCategory("工作", skip) {
+		t.Error("未命中的分类不应被跳过")
+	}
+	if skipCategory("垃圾", nil) {
+		t.Error("空名单不应跳过任何分类")
+	}
+}
+
 func TestLikelyHasHistory(t *testing.T) {
 	cases := []struct {
 		m    *imap.Mail
