@@ -9,6 +9,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/mailpilot
 EnvironmentFile=/home/ubuntu/mailpilot/.env
+Environment=MAILPILOT_CONFIG=/home/ubuntu/mailpilot/config.yaml
 ExecStart=/usr/local/bin/mailpilot daemon -c /home/ubuntu/mailpilot/config.yaml
 Restart=always
 RestartSec=10
