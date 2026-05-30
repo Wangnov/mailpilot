@@ -16,7 +16,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Wangnov/mailpilot?color=2ea44f" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-Linux%20·%20macOS-555?logo=linux&logoColor=white" alt="Platform">
   <img src="https://img.shields.io/badge/single%20binary-zero%20deps-38bdf8" alt="Single binary, zero deps">
-  <img src="https://img.shields.io/badge/LLM-codex%20·%20openai%20·%20ollama-4f46e5" alt="Providers">
+  <img src="https://img.shields.io/badge/LLM-codex%20·%20openai%20·%20gemini%20·%20ollama-4f46e5" alt="Providers">
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 
 ## 🇨🇳 中文
 
-`mailpilot` 盯着你的收件箱，通过 **IMAP IDLE** 在新邮件到达的那一刻，把它丢给一个 LLM（你的 ChatGPT 订阅经 `codex`、任意 OpenAI 兼容 API，或本地 Ollama），再把结构化摘要（**分类 · 紧急度 · 一句话 · 关键点**）经 **Bark / Telegram / ntfy / Webhook** 秒级推到你手机。
+`mailpilot` 盯着你的收件箱，通过 **IMAP IDLE** 在新邮件到达的那一刻，把它丢给一个 LLM（你的 ChatGPT 订阅经 `codex`、任意 OpenAI 兼容 API、Google Gemini，或本地 Ollama），再把结构化摘要（**分类 · 紧急度 · 一句话 · 关键点**）经 **Bark / Telegram / ntfy / Webhook** 秒级推到你手机。
 
 一个 `scp` 上去就能跑的静态二进制 —— 目标机 **不需要 Python / pip / venv**。goroutine 驱动的 IMAP IDLE 带来秒级延迟。
 
@@ -189,7 +189,7 @@ sudo journalctl -u mailpilot -f
 
 ### 🔒 安全
 
-只读 IMAP（应用专用密码，绝不发信/删信）；邮件正文视为**不可信**（URL 剥离、包裹、提示词禁止执行正文里的任何指令）。`codex` 子进程**被收进项目内**：一次性沙箱（写不到你的 `config.yaml`/`.env`）、`--ephemeral` 不在 `~/.codex` 堆积、不动你的 codex 配置、系统 temp / 家目录零足迹。所有凭据可吊销。
+只读 IMAP（应用专用密码，绝不发信/删信）；邮件正文视为**不可信**：包裹进结构标记、中和正文伪造的越狱标记、提示词禁止执行正文里的任何指令——链接**原样保留**以便判断内容真伪（可用工具全是只读的，没有可被诱导执行的能力）。判真伪不写死规则，而是**复用 Gmail 已有的收件箱/垃圾箱信号**作提示。`codex` 子进程**被收进项目内**：一次性沙箱（写不到你的 `config.yaml`/`.env`）、`--ephemeral` 不在 `~/.codex` 堆积、不动你的 codex 配置、系统 temp / 家目录零足迹。所有凭据可吊销。
 
 ### 🛠 构建与发布
 
@@ -216,7 +216,7 @@ MIT © 2026 wangnov
 
 ## 🇬🇧 English
 
-`mailpilot` watches your inbox over **IMAP IDLE** and, the moment a new email arrives, runs it through an LLM (your ChatGPT subscription via `codex`, any OpenAI-compatible API, or a local Ollama model), then pushes a structured summary (**category · urgency · one-line · key points**) to your phone via **Bark / Telegram / ntfy / Webhook**.
+`mailpilot` watches your inbox over **IMAP IDLE** and, the moment a new email arrives, runs it through an LLM (your ChatGPT subscription via `codex`, any OpenAI-compatible API, Google Gemini, or a local Ollama model), then pushes a structured summary (**category · urgency · one-line · key points**) to your phone via **Bark / Telegram / ntfy / Webhook**.
 
 One static binary you `scp` and run — **no Python / pip / venv on the target host**. goroutine-based IMAP IDLE for second-level latency.
 
@@ -372,7 +372,7 @@ sudo journalctl -u mailpilot -f
 
 ### 🔒 Security
 
-Read-only IMAP (App Password, never sends/deletes); email bodies treated as **untrusted** (URLs stripped, wrapped, prompt forbids executing any in-body instructions). The `codex` subprocess is **confined to the project**: a throwaway per-run sandbox (writes can't reach your `config.yaml`/`.env`), `--ephemeral` so nothing accumulates in `~/.codex`, your codex config left untouched, zero footprint in system temp or your home dir. All credentials revocable.
+Read-only IMAP (App Password, never sends/deletes); email bodies treated as **untrusted**: wrapped in structural delimiters, in-body jailbreak markers neutralized, prompt forbids executing any in-body instructions — URLs are **kept intact** for content judgment, since every exposed tool is read-only and can't be coerced into acting. Authenticity isn't judged by hardcoded rules but by **reusing Gmail's existing inbox/spam signals** as hints. The `codex` subprocess is **confined to the project**: a throwaway per-run sandbox (writes can't reach your `config.yaml`/`.env`), `--ephemeral` so nothing accumulates in `~/.codex`, your codex config left untouched, zero footprint in system temp or your home dir. All credentials revocable.
 
 ### 🛠 Build & release
 
