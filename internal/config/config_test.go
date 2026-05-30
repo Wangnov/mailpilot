@@ -11,7 +11,7 @@ func TestLoadEnvExpandAndDefaults(t *testing.T) {
 	t.Setenv("MP_BK", "barkkey")
 	p := filepath.Join(t.TempDir(), "c.yaml")
 	yaml := "imap:\n  user: a@b.com\n  password: ${MP_PW}\n" +
-		"analyze:\n  providers:\n    - type: openai\n      model: gpt-4o-mini\n" +
+		"analyze:\n  providers:\n    - type: openai\n      model: gpt-5.4-mini\n" +
 		"notify:\n  - type: bark\n    key: ${MP_BK}\n"
 	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)

@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Cross-compile static binaries
+        run: |
+          mkdir -p dist
+          for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+            export GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0
+            out="mailpilot-${GOOS}-${GOARCH}"
+            echo "→ building $out"
+            go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/${out}" .
+          done
+          cd dist && sha256sum mailpilot-* > SHA256SUMS.txt && ls -lh
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/mailpilot-linux-amd64 \
+            dist/mailpilot-linux-arm64 \
+            dist/mailpilot-darwin-arm64 \
+            dist/mailpilot-darwin-amd64 \
+            dist/SHA256SUMS.txt \
+            --title "mailpilot ${GITHUB_REF_NAME}" \
+            --generate-notes

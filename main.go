@@ -26,7 +26,7 @@ const configTemplate = `imap:
 analyze:
   providers:                      # 按序尝试，失败/限流自动降级到下一个
     - type: openai                # OpenAI 或任意兼容端点(可加 base_url)
-      model: gpt-4o-mini
+      model: gpt-5.4-mini
       api_key: ${OPENAI_API_KEY}
     # - type: codex               # ChatGPT 订阅(本机需装 codex CLI)，省 API 费但可能限流
     #   model: gpt-5.3-codex-spark
@@ -47,6 +47,9 @@ pipeline:
   baseline_on_first_run: true
   history_search: true
 `
+
+// version 由 release 构建经 -ldflags "-X main.version=<tag>" 注入。
+var version = "dev"
 
 func logln(s string) {
 	fmt.Printf("[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), s)
@@ -69,6 +72,10 @@ func main() {
 	cmd := os.Args[1]
 	if cmd == "-h" || cmd == "--help" || cmd == "help" {
 		usage()
+		return
+	}
+	if cmd == "-v" || cmd == "--version" || cmd == "version" {
+		fmt.Println("mailpilot", version)
 		return
 	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
