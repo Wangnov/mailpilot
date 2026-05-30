@@ -149,6 +149,7 @@ pipeline:
   baseline_on_first_run: true
   history_search: true
   # skip_categories: [垃圾, 营销推广]   # 命中的分类只分析、不推送；默认全部推送
+  # scan_spam: true                    # 兜底扫垃圾箱，救回被 Gmail 误判进垃圾箱的正常邮件
 ```
 
 `${ENV}` 在 YAML **解析后**对字符串字段展开，因此密钥里含 `: # "` 等特殊字符也不会破坏解析。
@@ -167,7 +168,9 @@ pipeline:
 
 按分析结果智能映射渠道能力：紧急→破防+声音、垃圾→静默、验证码→可复制、点按→在 Gmail 打开、按分类归组。开箱支持 **Bark / Telegram / ntfy / Webhook**（Webhook 兼容企业微信 / Slack 纯文本字段）。Bark 默认用 mailpilot 的 logo 作推送图标，可用 `notify[].icon` 改 URL，或设为空串关闭。
 
-**垃圾 / 营销邮件**：`垃圾`、`营销推广`、`低` 默认走**静音**推送（仍进通知中心、不响铃）；想彻底不推某些分类，配 `pipeline.skip_categories: [垃圾, 营销推广]`（这些邮件仍会被分析，只是不推）。注意 Gmail 自带的垃圾邮件本就不在 `INBOX`，我们也扫不到。
+**垃圾 / 营销邮件**：`垃圾`、`营销推广`、`低` 默认走**静音**推送（仍进通知中心、不响铃）；想彻底不推某些分类，配 `pipeline.skip_categories: [垃圾, 营销推广]`（这些邮件仍会被分析，只是不推）。
+
+注意我们只扫 `INBOX`：Gmail 自己判定的垃圾邮件本就不在 `INBOX`。反过来，**Gmail 误杀进垃圾箱的真邮件，默认你也收不到通知**——担心这点就开 `pipeline.scan_spam: true` 兜底扫垃圾箱，仅当 LLM 判定它【不是】垃圾/营销时才推一条「可能误判」提醒（成本随垃圾量上升）。
 
 **通知语言**：正文（摘要 / 要点 / 建议）的语言由 `analyze.language` 决定，默认 `中文`，可设 `English` / `日本語` 等，或 `auto`(随邮件本身语言)。`category` / `urgency` 是供逻辑判断的稳定枚举键（保持中文），与显示语言无关。
 
@@ -325,6 +328,7 @@ pipeline:
   baseline_on_first_run: true
   history_search: true
   # skip_categories: [垃圾, 营销推广]   # only analyze, don't push these categories; default pushes all
+  # scan_spam: true                    # also sweep the Spam folder to rescue mail Gmail mis-filed there
 ```
 
 `${ENV}` is expanded on parsed string fields **after** YAML parsing, so secrets containing `: # "` etc. can't break parsing.
@@ -343,7 +347,9 @@ pipeline:
 
 Channel capabilities are mapped from the analysis: urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category. Ships with **Bark / Telegram / ntfy / Webhook** (the Webhook payload is compatible with WeCom / Slack plain-text fields). Bark uses the mailpilot logo as the default push icon — override the URL via `notify[].icon`, or set an empty string to disable.
 
-**Spam / marketing:** `垃圾`, `营销推广`, and `低` default to **silent** pushes (still in Notification Center, no alert); to drop certain categories entirely, set `pipeline.skip_categories: [垃圾, 营销推广]` (those mails are still analyzed, just not pushed). Note Gmail's own spam never reaches `INBOX`, so we don't see it anyway.
+**Spam / marketing:** `垃圾`, `营销推广`, and `低` default to **silent** pushes (still in Notification Center, no alert); to drop certain categories entirely, set `pipeline.skip_categories: [垃圾, 营销推广]` (those mails are still analyzed, just not pushed).
+
+We only scan `INBOX`: Gmail's own spam never reaches it. The flip side — **a real email Gmail mis-files into Spam won't notify you by default.** If that worries you, set `pipeline.scan_spam: true` to also sweep the Spam folder; it pushes a "[possible misfile]" alert only when the LLM judges the message is NOT junk (cost scales with spam volume).
 
 **Notification language:** the free text (summary / key points / action) follows `analyze.language` (default `中文`; set `English` / `日本語`, or `auto` to match the email). `category` / `urgency` are stable internal enum keys (kept in Chinese for the matching logic) and are independent of the display language.
 

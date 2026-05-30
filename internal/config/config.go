@@ -10,11 +10,12 @@ import (
 )
 
 type IMAP struct {
-	Host      string `yaml:"host"`
-	User      string `yaml:"user"`
-	Password  string `yaml:"password"`
-	Mailbox   string `yaml:"mailbox"`
-	ForceIPv4 bool   `yaml:"force_ipv4"`
+	Host        string `yaml:"host"`
+	User        string `yaml:"user"`
+	Password    string `yaml:"password"`
+	Mailbox     string `yaml:"mailbox"`
+	SpamMailbox string `yaml:"spam_mailbox"` // 垃圾箱文件夹；scan_spam 开启且留空时默认 [Gmail]/Spam
+	ForceIPv4   bool   `yaml:"force_ipv4"`
 }
 
 type Provider struct {
@@ -59,6 +60,7 @@ type Pipeline struct {
 	MaxBodyChars       int      `yaml:"max_body_chars"`
 	StatePath          string   `yaml:"state_path"`
 	SkipCategories     []string `yaml:"skip_categories"` // 命中这些分类的邮件只分析、不推送(如 [垃圾, 营销推广])；空=全部推送
+	ScanSpam           bool     `yaml:"scan_spam"`       // 兜底扫垃圾箱：救回被邮箱误判进垃圾箱的正常邮件(成本随垃圾量上升)
 }
 
 type Config struct {

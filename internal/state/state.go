@@ -12,6 +12,11 @@ type State struct {
 	LastUID      uint32         `json:"last_uid"`
 	Failed       map[string]int `json:"failed"`
 	BaselineDone bool           `json:"baseline_done"`
+	// 垃圾箱兜底扫描的独立水位线（uid 与 INBOX 不同名空间，必须分开）。
+	SpamUIDValidity  uint32         `json:"spam_uidvalidity,omitempty"`
+	SpamLastUID      uint32         `json:"spam_last_uid,omitempty"`
+	SpamFailed       map[string]int `json:"spam_failed,omitempty"`
+	SpamBaselineDone bool           `json:"spam_baseline_done,omitempty"`
 }
 
 func Load(path string) *State {
@@ -21,6 +26,9 @@ func Load(path string) *State {
 	}
 	if s.Failed == nil {
 		s.Failed = map[string]int{}
+	}
+	if s.SpamFailed == nil {
+		s.SpamFailed = map[string]int{}
 	}
 	s.path = path
 	return s

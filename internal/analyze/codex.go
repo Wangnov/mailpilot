@@ -35,16 +35,16 @@ func (p *codexProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) 
 	// 宁可报错降级到下一个 provider，也不退回系统临时目录污染用户系统。
 	base := p.workRoot
 	if base == "" {
-		return nil, fmt.Errorf("codex workRoot 未配置（拒绝退回系统临时目录）")
+		return nil, transientErr(fmt.Errorf("codex workRoot 未配置（拒绝退回系统临时目录）"))
 	}
 	if err := os.MkdirAll(base, 0o700); err != nil {
-		return nil, fmt.Errorf("创建 codex 工作目录失败: %w", err)
+		return nil, transientErr(fmt.Errorf("创建 codex 工作目录失败: %w", err))
 	}
 
 	// schema 放在沙箱【外】（codex 只读它，不可被沙箱内命令改写）。
 	f, err := os.CreateTemp(base, "schema-*.json")
 	if err != nil {
-		return nil, err
+		return nil, transientErr(err)
 	}
 	defer os.Remove(f.Name())
 	_ = json.NewEncoder(f).Encode(OutputSchema)
@@ -53,7 +53,7 @@ func (p *codexProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) 
 	// sandbox 是 codex 的空 CWD：workspace-write 把写操作限制在此，碰不到 config.yaml/.env/state.json。
 	sandbox, err := os.MkdirTemp(base, "codex-cwd-")
 	if err != nil {
-		return nil, err
+		return nil, transientErr(err)
 	}
 	defer os.RemoveAll(sandbox)
 
@@ -75,7 +75,11 @@ func (p *codexProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) 
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("codex 执行失败: %s", tail(errb.String(), 300))
+		return nil, transientErr(fmt.Errorf("codex 执行失败: %s", tail(errb.String(), 300)))
 	}
-	return parseAnalysis(out.Bytes())
+	a, err := parseAnalysis(out.Bytes())
+	if err != nil {
+		return nil, droppableErr(err) // codex 回了内容但解析失败：归为可丢弃
+	}
+	return a, nil
 }

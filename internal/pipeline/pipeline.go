@@ -20,13 +20,36 @@ import (
 // ToolCmd 是 agentic provider 在沙箱里调用的历史检索命令。
 const ToolCmd = "mailpilot tool-search"
 
+// mailbox 抽象出 RunOnce 用到的只读取信能力，便于用假实现做集成测试。*imap.Box 实现它。
+type mailbox interface {
+	Connect() error
+	Close()
+	UIDValidity() (uint32, error)
+	AllUIDs() ([]uint32, error)
+	Fetch(uid uint32, maxBody int) (*imap.Mail, error)
+}
+
+// scanTarget 描述一次扫描的对象：用哪个 mailbox、读写 state 里的哪组水位线/重试队列，
+// 以及是否走"垃圾箱救援"模式。INBOX 与垃圾箱共用同一套扫描逻辑(scanOnce)，只是指向不同字段。
+type scanTarget struct {
+	box          mailbox
+	uidv         *uint32
+	lastUID      *uint32
+	baselineDone *bool
+	failed       *map[string]int
+	rescue       bool   // 垃圾箱：仅当 LLM 判定它【不是】垃圾/营销时才推送(救回误判)
+	label        string // 日志前缀
+}
+
 type Pipeline struct {
 	cfg       *config.Config
 	log       func(string)
-	box       *imap.Box
+	box       mailbox
+	spamBox   mailbox // 兜底扫描垃圾箱；scan_spam 关闭时为 nil
 	providers []analyze.Provider
 	notifiers []notify.Notifier
 	st        *state.State
+	pace      time.Duration // 每封之间的间隔（默认 300ms，测试可设 0）
 }
 
 func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, error) {
@@ -49,11 +72,21 @@ func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, er
 		}
 		notifiers = append(notifiers, n)
 	}
-	return &Pipeline{
+	p := &Pipeline{
 		cfg: cfg, log: log, box: imap.New(cfg.IMAP),
 		providers: providers, notifiers: notifiers,
-		st: state.Load(cfg.Pipeline.StatePath),
-	}, nil
+		st:   state.Load(cfg.Pipeline.StatePath),
+		pace: 300 * time.Millisecond,
+	}
+	if cfg.Pipeline.ScanSpam { // 兜底扫垃圾箱：单独的 IMAP 连接选中垃圾箱文件夹
+		spamCfg := cfg.IMAP
+		spamCfg.Mailbox = cfg.IMAP.SpamMailbox
+		if spamCfg.Mailbox == "" {
+			spamCfg.Mailbox = "[Gmail]/Spam"
+		}
+		p.spamBox = imap.New(spamCfg)
+	}
+	return p, nil
 }
 
 var (
@@ -69,13 +102,13 @@ func likelyHasHistory(m *imap.Mail) bool {
 	return reIss.MatchString(m.Subject + " " + m.Body)
 }
 
-func (p *Pipeline) processOne(uid uint32) error {
-	mail, err := p.box.Fetch(uid, p.cfg.Pipeline.MaxBodyChars)
+func (p *Pipeline) processOne(uid uint32, tgt scanTarget) error {
+	mail, err := tgt.box.Fetch(uid, p.cfg.Pipeline.MaxBodyChars)
 	if err != nil {
 		return err
 	}
 	if mail == nil {
-		p.log(fmt.Sprintf("uid=%d 取信失败(可能已删)，跳过", uid))
+		p.log(fmt.Sprintf("%suid=%d 取信失败(可能已删)，跳过", tgt.label, uid))
 		return nil
 	}
 	if p.cfg.OCR.Enabled && len([]rune(mail.Body)) < p.cfg.OCR.MinBody && len(mail.Images) > 0 {
@@ -84,19 +117,26 @@ func (p *Pipeline) processOne(uid uint32) error {
 		}
 	}
 	hist := p.cfg.Pipeline.HistorySearch && likelyHasHistory(mail)
-	p.log(fmt.Sprintf("分析 uid=%d | %s | 历史检索:%s", uid, truncRune(mail.Subject, 40), onoff(hist)))
+	p.log(fmt.Sprintf("%s分析 uid=%d | %s | 历史检索:%s", tgt.label, uid, truncRune(mail.Subject, 40), onoff(hist)))
 	a, err := analyze.WithFallback(p.providers, mail, hist, ToolCmd, p.log)
 	if err != nil {
 		return err
 	}
-	if skipCategory(a.Category, p.cfg.Pipeline.SkipCategories) {
+	if tgt.rescue {
+		// 垃圾箱救援：LLM 同意它是垃圾/营销 → 不打扰；否则视为误判，标注后推送。
+		if a.Category == "垃圾" || a.Category == "营销推广" {
+			p.log(fmt.Sprintf("%suid=%d 经判定确为[%s]，不打扰", tgt.label, uid, a.Category))
+			return nil
+		}
+		mail.Subject = "[可能误判·垃圾箱] " + mail.Subject
+	} else if skipCategory(a.Category, p.cfg.Pipeline.SkipCategories) {
 		p.log(fmt.Sprintf("· uid=%d 分类[%s] 命中忽略规则，跳过推送", uid, a.Category))
 		return nil // 已成功分析、仅按规则不推送：算处理完成，水位线照常推进
 	}
 	if !notify.NotifyAll(p.notifiers, mail, a, p.log) {
 		return fmt.Errorf("部分通知渠道失败")
 	}
-	p.log(fmt.Sprintf("✓ uid=%d 已推送 [%s/%s]", uid, a.Category, a.Urgency))
+	p.log(fmt.Sprintf("%s✓ uid=%d 已推送 [%s/%s]", tgt.label, uid, a.Category, a.Urgency))
 	return nil
 }
 
@@ -110,14 +150,38 @@ func skipCategory(category string, skip []string) bool {
 	return false
 }
 
+func (p *Pipeline) inboxTarget() scanTarget {
+	return scanTarget{box: p.box, uidv: &p.st.UIDValidity, lastUID: &p.st.LastUID,
+		baselineDone: &p.st.BaselineDone, failed: &p.st.Failed}
+}
+
+func (p *Pipeline) spamTarget() scanTarget {
+	return scanTarget{box: p.spamBox, uidv: &p.st.SpamUIDValidity, lastUID: &p.st.SpamLastUID,
+		baselineDone: &p.st.SpamBaselineDone, failed: &p.st.SpamFailed, rescue: true, label: "[垃圾箱] "}
+}
+
+// RunOnce 扫一遍收件箱；若开启 scan_spam，再兜底扫一遍垃圾箱(救回误判)。垃圾箱失败不影响主流程。
 func (p *Pipeline) RunOnce() error {
-	if err := p.box.Connect(); err != nil {
+	if err := p.scanOnce(p.inboxTarget()); err != nil {
 		return err
 	}
-	defer p.box.Close()
+	if p.spamBox != nil {
+		if err := p.scanOnce(p.spamTarget()); err != nil {
+			p.log("[垃圾箱] 扫描异常: " + err.Error())
+		}
+	}
+	return p.st.Save()
+}
 
-	uidv, _ := p.box.UIDValidity()
-	all, err := p.box.AllUIDs()
+// scanOnce 对单个 mailbox 执行：连接 → 首跑建基线 → 选取待处理 → 分析推送 → 更新水位/重试队列。
+func (p *Pipeline) scanOnce(tgt scanTarget) error {
+	if err := tgt.box.Connect(); err != nil {
+		return err
+	}
+	defer tgt.box.Close()
+
+	uidv, _ := tgt.box.UIDValidity()
+	all, err := tgt.box.AllUIDs()
 	if err != nil {
 		return err
 	}
@@ -130,55 +194,61 @@ func (p *Pipeline) RunOnce() error {
 		}
 	}
 
-	if p.cfg.Pipeline.BaselineOnFirstRun && (!p.st.BaselineDone || p.st.UIDValidity != uidv) {
-		p.st.SetBaseline(uidv, maxUID)
-		_ = p.st.Save()
-		p.log(fmt.Sprintf("基线已建立：共 %d 封，水位 last_uid=%d，本次不推历史。", len(all), maxUID))
+	if p.cfg.Pipeline.BaselineOnFirstRun && (!*tgt.baselineDone || *tgt.uidv != uidv) {
+		*tgt.uidv, *tgt.lastUID, *tgt.baselineDone, *tgt.failed = uidv, maxUID, true, map[string]int{}
+		p.log(fmt.Sprintf("%s基线已建立：共 %d 封，水位 last_uid=%d，本次不推历史。", tgt.label, len(all), maxUID))
 		return nil
 	}
 
-	last := p.st.LastUID
 	todo, newCount, retryCount, total := planTodo(
-		all, allSet, last, p.st.Failed, p.cfg.Pipeline.MaxPerRun, p.cfg.Pipeline.MaxRetry)
+		all, allSet, *tgt.lastUID, *tgt.failed, p.cfg.Pipeline.MaxPerRun, p.cfg.Pipeline.MaxRetry)
 	if total == 0 {
-		p.log("无新邮件。")
-		return nil
+		return nil // 无新邮件：静默返回（daemon 会周期性扫描，避免刷屏）
 	}
 	if total > p.cfg.Pipeline.MaxPerRun {
-		p.log(fmt.Sprintf("待处理 %d 封超上限 %d，本次先处理最旧 %d 封，其余下轮继续。",
-			total, p.cfg.Pipeline.MaxPerRun, p.cfg.Pipeline.MaxPerRun))
+		p.log(fmt.Sprintf("%s待处理 %d 封超上限 %d，本次先处理最旧 %d 封，其余下轮继续。",
+			tgt.label, total, p.cfg.Pipeline.MaxPerRun, p.cfg.Pipeline.MaxPerRun))
 	}
-	p.log(fmt.Sprintf("待处理 %d 封（新 %d / 重试 %d）", len(todo), newCount, retryCount))
+	p.log(fmt.Sprintf("%s待处理 %d 封（新 %d / 重试 %d）", tgt.label, len(todo), newCount, retryCount))
 
 	// 携带失败计数前推，顺手剔除已不在邮箱内(被删)的死条目。
-	failed := make(map[string]int, len(p.st.Failed))
-	for k, v := range p.st.Failed {
+	failed := make(map[string]int, len(*tgt.failed))
+	for k, v := range *tgt.failed {
 		if vv, e := strconv.ParseUint(k, 10, 32); e == nil && allSet[uint32(vv)] {
 			failed[k] = v
 		}
 	}
 	for _, uid := range todo {
 		key := strconv.Itoa(int(uid))
-		if err := p.processOne(uid); err != nil {
+		err := p.processOne(uid, tgt)
+		switch {
+		case err == nil:
+			delete(failed, key)
+		case analyze.IsDroppable(err):
+			// 模型已响应但产物无法解析——这封邮件本身有问题，多次后放弃。
 			failed[key]++
 			if failed[key] >= p.cfg.Pipeline.MaxRetry {
-				p.log(fmt.Sprintf("✗ uid=%d 第%d次失败，已达上限放弃: %s", uid, failed[key], err.Error()))
-				delete(failed, key) // 放弃重试，避免死条目无限堆积
+				p.log(fmt.Sprintf("%s✗ uid=%d 第%d次失败，已达上限放弃: %s", tgt.label, uid, failed[key], err.Error()))
+				delete(failed, key)
 			} else {
-				p.log(fmt.Sprintf("✗ uid=%d 处理失败(第%d次，将重试): %s", uid, failed[key], err.Error()))
+				p.log(fmt.Sprintf("%s✗ uid=%d 处理失败(第%d次，将重试): %s", tgt.label, uid, failed[key], err.Error()))
 			}
-		} else {
-			delete(failed, key)
+		default:
+			// 暂时性故障（网络/限流/exec/通知失败/IMAP 抖动）：保留待重试，绝不因此放弃，
+			// 否则一次基础设施抖动就会永久丢信。基础设施恢复后自然成功。
+			if _, ok := failed[key]; !ok {
+				failed[key] = 0 // 入队但不推进放弃计数
+			}
+			p.log(fmt.Sprintf("%s✗ uid=%d 暂时性故障，保留重试(不计入放弃): %s", tgt.label, uid, err.Error()))
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(p.pace)
 	}
 
 	// 水位线只推进到本轮 todo 里实际覆盖的最大 uid（retry 的旧 uid < last 不影响）。
-	p.st.LastUID = advanceWatermark(todo, last)
-	p.st.Failed = failed
-	p.st.UIDValidity = uidv
-	_ = p.st.Save()
-	p.log(fmt.Sprintf("本轮完成。水位 last_uid=%d，待重试 %d 封。", p.st.LastUID, len(failed)))
+	*tgt.lastUID = advanceWatermark(todo, *tgt.lastUID)
+	*tgt.failed = failed
+	*tgt.uidv = uidv
+	p.log(fmt.Sprintf("%s本轮完成。水位 last_uid=%d，待重试 %d 封。", tgt.label, *tgt.lastUID, len(failed)))
 	return nil
 }
 

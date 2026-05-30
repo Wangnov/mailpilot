@@ -4,8 +4,10 @@ package analyze
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Wangnov/mailpilot/internal/config"
@@ -46,9 +48,35 @@ func BuildProvider(cfg config.Provider, timeout int, workDir, language string) (
 	return nil, fmt.Errorf("未知 provider 类型: %s", cfg.Type)
 }
 
+// analyzeError 标注一次失败是否"可丢弃"：
+//   - droppable=true：模型已响应、但产物无法解析成结果（这封邮件本身有问题，可在多次后放弃）
+//   - droppable=false：调用层故障（网络/限流/超时/exec 失败/无 provider），属暂时性，
+//     不该让邮件因此被永久放弃——基础设施恢复后还应能成功。
+type analyzeError struct {
+	err       error
+	droppable bool
+}
+
+func (e *analyzeError) Error() string { return e.err.Error() }
+func (e *analyzeError) Unwrap() error { return e.err }
+
+func transientErr(err error) error { return &analyzeError{err: err, droppable: false} }
+func droppableErr(err error) error { return &analyzeError{err: err, droppable: true} }
+
+// TransientErr / DroppableErr 供自定义 provider（及测试）标注失败类型，见 IsDroppable。
+func TransientErr(err error) error { return transientErr(err) }
+func DroppableErr(err error) error { return droppableErr(err) }
+
+// IsDroppable 报告该错误是否代表"模型已响应但产物不可用"——只有这类失败才应计入放弃。
+func IsDroppable(err error) bool {
+	var e *analyzeError
+	return errors.As(err, &e) && e.droppable
+}
+
 // WithFallback 按序尝试 providers，失败/限流自动降级。
 func WithFallback(providers []Provider, m *imap.Mail, withHistory bool, toolCmd string, log func(string)) (*Analysis, error) {
 	var lastErr error
+	droppable := false
 	for i, p := range providers {
 		a, err := p.Analyze(m, withHistory && p.SupportsTools(), toolCmd)
 		if err == nil {
@@ -57,13 +85,16 @@ func WithFallback(providers []Provider, m *imap.Mail, withHistory bool, toolCmd 
 			}
 			return a, nil
 		}
+		if IsDroppable(err) { // 只要有任一 provider 真的回了内容(只是没解析出来)，就视为可丢弃
+			droppable = true
+		}
 		lastErr = err
 		log(fmt.Sprintf("provider %s 失败，尝试下一个: %s", p.Name(), tail(err.Error(), 150)))
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("无可用 provider")
+		lastErr = errors.New("无可用 provider")
 	}
-	return nil, lastErr
+	return nil, &analyzeError{err: lastErr, droppable: droppable}
 }
 
 // ---- schema / prompt ----
@@ -130,9 +161,20 @@ func buildPrompt(withHistory bool, toolCmd string, uid uint32, language string) 
 	return p
 }
 
+// delimRe 匹配我们用于框定可信/不可信区的结构标记。
+var delimRe = regexp.MustCompile(`(?i)<\s*/?\s*(?:email_untrusted|mailbox_context)\s*>`)
+
+// neutralizeDelims 把不可信字段里出现的结构标记中和成全角括号，防止邮件正文
+// 伪造 </email_untrusted> 或 <mailbox_context> 来"越狱"出不可信区。
+func neutralizeDelims(s string) string {
+	return delimRe.ReplaceAllStringFunc(s, func(m string) string {
+		return strings.NewReplacer("<", "＜", ">", "＞").Replace(m)
+	})
+}
+
 func buildStdin(m *imap.Mail) string {
 	return mailboxContext(m) + fmt.Sprintf("<email_untrusted>\n发件人: %s\n主题: %s\n日期: %s\n本邮件uid: %d\n\n正文:\n%s\n</email_untrusted>\n",
-		m.From, m.Subject, m.Date, m.UID, m.Body)
+		neutralizeDelims(m.From), neutralizeDelims(m.Subject), m.Date, m.UID, neutralizeDelims(m.Body))
 }
 
 // mailboxContext 复用邮箱服务商已有的筛选结果（可信信号，非邮件内容）：邮件在哪个文件夹、
@@ -143,9 +185,13 @@ func mailboxContext(m *imap.Mail) string {
 	}
 	var b strings.Builder
 	b.WriteString("<mailbox_context>（以下为邮箱服务商提供的可信信号，不是邮件内容）\n")
-	if strings.EqualFold(m.Mailbox, "INBOX") {
+	ml := strings.ToLower(m.Mailbox)
+	switch {
+	case strings.EqualFold(m.Mailbox, "INBOX"):
 		b.WriteString("- 位置：收件箱(INBOX)——已通过邮箱服务商(如 Gmail)的反垃圾/反钓鱼过滤，未被判为垃圾或钓鱼\n")
-	} else {
+	case strings.Contains(ml, "spam") || strings.Contains(ml, "junk") || strings.Contains(m.Mailbox, "垃圾"):
+		b.WriteString("- 位置：垃圾箱——已被邮箱服务商判为垃圾/钓鱼。请重点判断它【是否其实是用户需要的正常邮件】(误判)\n")
+	default:
 		b.WriteString(fmt.Sprintf("- 位置：文件夹「%s」\n", m.Mailbox))
 	}
 	var marks []string

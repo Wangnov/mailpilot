@@ -49,6 +49,7 @@ pipeline:
   baseline_on_first_run: true
   history_search: true
   # skip_categories: [垃圾, 营销推广]   # 命中的分类只分析、不推送；默认全部推送
+  # scan_spam: true                    # 兜底扫垃圾箱，救回被邮箱误判的正常邮件(成本随垃圾量上升)
 `
 
 // version 由 release 构建经 -ldflags "-X main.version=<tag>" 注入。

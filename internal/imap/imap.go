@@ -144,7 +144,8 @@ func (b *Box) Fetch(uid uint32, maxBody int) (*Mail, error) {
 	return m, nil
 }
 
-// IdleLoop 进入 IDLE，新邮件触发 onNew；每 timeout 重置一次 IDLE。断连返回错误由外层重连。
+// IdleLoop 进入 IDLE，新邮件触发 onNew；每 timeout 也跑一次 onNew 作周期性兜底
+// （补 IDLE 可能漏掉的事件，并驱动垃圾箱扫描）。断连返回错误由外层重连。
 func (b *Box) IdleLoop(onNew func(), timeout time.Duration) error {
 	for {
 		idleCmd, err := b.c.Idle()
@@ -155,17 +156,13 @@ func (b *Box) IdleLoop(onNew func(), timeout time.Duration) error {
 		select {
 		case <-b.newCh:
 			timer.Stop()
-			idleCmd.Close()
-			if err := idleCmd.Wait(); err != nil {
-				return err
-			}
-			onNew()
 		case <-timer.C:
-			idleCmd.Close()
-			if err := idleCmd.Wait(); err != nil {
-				return err
-			}
 		}
+		idleCmd.Close()
+		if err := idleCmd.Wait(); err != nil {
+			return err
+		}
+		onNew() // 新邮件事件 或 周期超时都触发一次处理
 	}
 }
 

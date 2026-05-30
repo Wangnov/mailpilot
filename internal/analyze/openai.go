@@ -79,9 +79,13 @@ func (p *openaiProvider) finalStructured(messages []map[string]any) (*Analysis, 
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, transientErr(err) // 调用层故障：网络/限流/非 200，暂时性
 	}
-	return parseAnalysis([]byte(choiceContent(raw)))
+	a, err := parseAnalysis([]byte(choiceContent(raw)))
+	if err != nil {
+		return nil, droppableErr(err) // 模型已响应但产物无法解析
+	}
+	return a, nil
 }
 
 func (p *openaiProvider) post(body map[string]any) ([]byte, error) {
