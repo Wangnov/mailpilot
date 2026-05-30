@@ -130,6 +130,9 @@ func cmdDaemon(path string) {
 }
 
 func cmdToolSearch(path string, maxN int, args []string) {
+	if env := os.Getenv("MAILPILOT_CONFIG"); env != "" {
+		path = env // 供 openai agent loop 子进程复用同一配置
+	}
 	if len(args) < 1 {
 		fmt.Println("用法: tool-search <search|get|thread> ...")
 		return

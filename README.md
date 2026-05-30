@@ -1,32 +1,33 @@
-# mailpilot-go
+# mailpilot
 
 > Minimal, push-style AI email assistant — in **a single Go binary**. New mail → LLM → your phone. Self-hosted, **zero runtime dependencies**.
 
-A Go port of [mailpilot](https://github.com/Wangnov/mailpilot) (the Python version). Same pipeline, packaged as one static binary you `scp` and run — **no Python / pip / venv on the target host**. Uses goroutine-based IMAP IDLE for second-level latency.
+`mailpilot` watches your inbox over **IMAP IDLE** and, the moment a new email arrives, runs it through an LLM (your ChatGPT subscription via `codex`, any OpenAI-compatible API, or a local Ollama model), then pushes a structured summary (category · urgency · one-line · key points) to your phone via **Bark / Telegram / ntfy / Webhook**.
 
-## Why the Go version
+One static binary you `scp` and run — **no Python / pip / venv on the target host**. goroutine-based IMAP IDLE for second-level latency.
 
-Cloudflare Workers can't run this (codex needs subprocesses; IMAP IDLE wants a long-lived process), so "no server" isn't on the table if you want the subscription-backed `codex` provider. The next best thing is making "needing a server" as cheap as possible: **one static binary, no dependencies, cross-compiled to any Linux/ARM/macOS**.
+## Why a single Go binary
+
+Cloudflare Workers can't host this: `codex` needs subprocesses and IMAP IDLE wants a long-lived process — both unsupported on Workers/WASI. Running `codex` on Cloudflare would mean a paid Container (≈ renting a small VM), which defeats "serverless to save money". So if you want a server at all, make it as cheap as possible: **one dependency-free static binary, cross-compiled to any Linux/ARM/macOS**.
 
 ## Features
 
-- 📦 **Single static binary** — `go build` → one file; `make cross` → linux/amd64, linux/arm64, darwin/arm64…
+- 📦 **Single static binary** — `go build` → one file; `make cross` → linux/amd64·arm64, darwin/arm64…
 - ⚡ **Real-time** — IMAP IDLE (goroutine), seconds not polling
 - 🧠 **Multi-provider with fallback** — `codex` (subscription) → `openai`/compatible → `ollama` (local)
+- 🔎 **Agentic history lookup, on every capable provider** — when a mail looks like a thread/issue reply, the model can autonomously search related past mail before answering. `codex` uses its own agent loop; `openai` uses a **built-in function-calling loop** (no LangChain, ~one file). So you don't lose history context when falling back off `codex`.
 - 🖼️ **Image emails OCR'd** — empty-body image mail → PaddleOCR before analysis
-- 🔎 **Agentic history lookup** — `codex` can call `mailpilot tool-search` (a hidden subcommand of the same binary) to search related past mail
-- 📱 **Smart multi-channel push** — Bark / Telegram / ntfy / Webhook; urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category
+- 📱 **Smart multi-channel push** — urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category
 - ♻️ **Reliable** — dedup watermark + retry queue + first-run baseline + IDLE auto-reconnect
-- 🔒 **Safe** — read-only IMAP, email body treated as untrusted, prompt-injection hardened
+- 🔒 **Safe** — read-only IMAP, body treated as untrusted, prompt-injection hardened
 
 ## Install
 
 ```bash
-go install github.com/Wangnov/mailpilot-go@latest
+go install github.com/Wangnov/mailpilot@latest
 # or from source:
-git clone https://github.com/Wangnov/mailpilot-go && cd mailpilot-go && make build
-# cross-compile a static binary for your server:
-make cross           # → dist/mailpilot-linux-arm64, etc.
+git clone https://github.com/Wangnov/mailpilot && cd mailpilot && make build
+make cross           # static binaries for your server → dist/mailpilot-linux-arm64, etc.
 ```
 
 ## Quick start
@@ -92,19 +93,17 @@ sudo journalctl -u mailpilot -f
 
 ## Providers
 
-- **`codex`** — your ChatGPT subscription via the Codex CLI (the binary shells out to `codex exec`). Saves API spend but can be rate-limited — always put `openai`/`ollama` after it. It can agentically call `mailpilot tool-search` to pull related history.
-- **`openai`** — OpenAI or any compatible endpoint (`base_url`), strict JSON-schema output. The reliable workhorse.
-- **`ollama`** — fully local, private, zero-cost.
+- **`codex`** — your ChatGPT subscription via the Codex CLI (shells out to `codex exec`). Saves API spend but can be rate-limited — always put `openai`/`ollama` after it. Agentic via codex's own loop, calling `mailpilot tool-search`.
+- **`openai`** — OpenAI or any compatible endpoint (`base_url`). **Does agentic history search via a built-in function-calling loop**: the model can call `mail_search` over several rounds, then a final json-schema call produces strict structured output. The reliable workhorse.
+- **`ollama`** — fully local, private, zero-cost. Single-shot (local models' tool-calling varies); use `openai`/`codex` for agentic history.
 
-## vs the Python version
+## How agentic history works (no framework)
 
-Same design, two implementations — pick by taste:
+`tool-search` is a hidden subcommand of the **same binary** — a read-only IMAP search/get/thread. `codex` calls it inside its sandbox; `openai`'s loop shells out to it too. So the one binary is simultaneously the daemon *and* the tool the LLM calls. No agent framework, no extra service.
 
-| | mailpilot-go | mailpilot (Python) |
-|---|---|---|
-| Deploy | one static binary, zero deps | needs python + pip deps |
-| Concurrency | goroutines | imapclient + subprocess |
-| Iterate | recompile | edit & run |
+## Security
+
+Read-only IMAP (App Password, never sends/deletes); email bodies treated as **untrusted** (URLs stripped, wrapped, prompt forbids executing any in-body instructions); `codex` runs sandboxed. All credentials revocable.
 
 ## License
 
