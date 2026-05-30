@@ -1,0 +1,35 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestLoadEnvExpandAndDefaults(t *testing.T) {
+	t.Setenv("MP_PW", "secret")
+	t.Setenv("MP_BK", "barkkey")
+	p := filepath.Join(t.TempDir(), "c.yaml")
+	yaml := "imap:\n  user: a@b.com\n  password: ${MP_PW}\n" +
+		"analyze:\n  providers:\n    - type: openai\n      model: gpt-4o-mini\n" +
+		"notify:\n  - type: bark\n    key: ${MP_BK}\n"
+	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IMAP.Password != "secret" {
+		t.Errorf("password=%q, want secret", c.IMAP.Password)
+	}
+	if c.Notify[0].Key != "barkkey" {
+		t.Errorf("key=%q, want barkkey", c.Notify[0].Key)
+	}
+	if c.IMAP.Host != "imap.gmail.com" {
+		t.Errorf("default host not applied: %q", c.IMAP.Host)
+	}
+	if c.Pipeline.MaxPerRun != 20 {
+		t.Errorf("default max_per_run=%d, want 20", c.Pipeline.MaxPerRun)
+	}
+}

@@ -1,0 +1,17 @@
+[Unit]
+Description=mailpilot — push-style AI email assistant (Go single binary)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 按需修改 User / 路径
+User=ubuntu
+WorkingDirectory=/home/ubuntu/mailpilot
+EnvironmentFile=/home/ubuntu/mailpilot/.env
+ExecStart=/usr/local/bin/mailpilot daemon -c /home/ubuntu/mailpilot/config.yaml
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

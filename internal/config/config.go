@@ -1,0 +1,109 @@
+// Package config 加载 YAML 配置，支持 ${ENV} 环境变量展开 + 默认值。
+package config
+
+import (
+	"os"
+	"regexp"
+
+	"gopkg.in/yaml.v3"
+)
+
+type IMAP struct {
+	Host      string `yaml:"host"`
+	User      string `yaml:"user"`
+	Password  string `yaml:"password"`
+	Mailbox   string `yaml:"mailbox"`
+	ForceIPv4 bool   `yaml:"force_ipv4"`
+}
+
+type Provider struct {
+	Type    string `yaml:"type"`     // codex | openai | ollama
+	Model   string `yaml:"model"`
+	BaseURL string `yaml:"base_url"`
+	APIKey  string `yaml:"api_key"`
+}
+
+type Analyze struct {
+	Providers []Provider `yaml:"providers"`
+	Timeout   int        `yaml:"timeout"`
+}
+
+type OCR struct {
+	Enabled bool   `yaml:"enabled"`
+	Type    string `yaml:"type"`
+	Token   string `yaml:"token"`
+	Model   string `yaml:"model"`
+	JobURL  string `yaml:"job_url"`
+	MinBody int    `yaml:"min_body"`
+}
+
+type Notifier struct {
+	Type     string `yaml:"type"` // bark | telegram | ntfy | webhook
+	Key      string `yaml:"key"`
+	Server   string `yaml:"server"`
+	BotToken string `yaml:"bot_token"`
+	ChatID   string `yaml:"chat_id"`
+	Topic    string `yaml:"topic"`
+	URL      string `yaml:"url"`
+}
+
+type Pipeline struct {
+	BaselineOnFirstRun bool   `yaml:"baseline_on_first_run"`
+	HistorySearch      bool   `yaml:"history_search"`
+	MaxPerRun          int    `yaml:"max_per_run"`
+	MaxRetry           int    `yaml:"max_retry"`
+	IdleTimeout        int    `yaml:"idle_timeout"`
+	MaxBodyChars       int    `yaml:"max_body_chars"`
+	StatePath          string `yaml:"state_path"`
+}
+
+type Config struct {
+	IMAP     IMAP       `yaml:"imap"`
+	Analyze  Analyze    `yaml:"analyze"`
+	OCR      OCR        `yaml:"ocr"`
+	Notify   []Notifier `yaml:"notify"`
+	Pipeline Pipeline   `yaml:"pipeline"`
+}
+
+var envRe = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+// Load 读取 YAML，展开 ${ENV}，应用默认值。
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	data = envRe.ReplaceAllFunc(data, func(m []byte) []byte {
+		return []byte(os.Getenv(string(m[2 : len(m)-1])))
+	})
+	var c Config
+	if err := yaml.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	c.applyDefaults()
+	return &c, nil
+}
+
+func (c *Config) applyDefaults() {
+	d := func(p *string, v string) {
+		if *p == "" {
+			*p = v
+		}
+	}
+	di := func(p *int, v int) {
+		if *p == 0 {
+			*p = v
+		}
+	}
+	d(&c.IMAP.Host, "imap.gmail.com")
+	d(&c.IMAP.Mailbox, "INBOX")
+	di(&c.Analyze.Timeout, 300)
+	d(&c.OCR.Model, "PaddleOCR-VL-1.6")
+	d(&c.OCR.JobURL, "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs")
+	di(&c.OCR.MinBody, 30)
+	di(&c.Pipeline.MaxPerRun, 20)
+	di(&c.Pipeline.MaxRetry, 3)
+	di(&c.Pipeline.IdleTimeout, 300)
+	di(&c.Pipeline.MaxBodyChars, 12000)
+	d(&c.Pipeline.StatePath, "state.json")
+}
