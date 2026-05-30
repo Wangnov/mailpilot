@@ -4,6 +4,7 @@ package imap
 import (
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"regexp"
@@ -70,12 +71,37 @@ func (b *Box) Connect() error {
 		c.Close()
 		return err
 	}
+	if b.cfg.Mailbox == "" { // 自动探测 \Junk(垃圾箱)特殊用途文件夹——跨语言/编码稳健
+		junk, err := findSpecialUse(c, imap.MailboxAttrJunk)
+		if err != nil || junk == "" {
+			c.Close()
+			return fmt.Errorf("未找到垃圾箱(\\Junk)文件夹: %v", err)
+		}
+		b.cfg.Mailbox = junk // 记录解析出的真实名字，供 mailbox_context 使用
+	}
 	if _, err := c.Select(b.cfg.Mailbox, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
 		c.Close()
 		return err
 	}
 	b.c = c
 	return nil
+}
+
+// findSpecialUse 通过 LIST(SPECIAL-USE) 找出带指定属性(如 \Junk)的文件夹名。
+// go-imap 内部处理 modified-UTF-7，返回的名字可直接用于 Select。
+func findSpecialUse(c *imapclient.Client, attr imap.MailboxAttr) (string, error) {
+	data, err := c.List("", "*", &imap.ListOptions{ReturnSpecialUse: true}).Collect()
+	if err != nil {
+		return "", err
+	}
+	for _, d := range data {
+		for _, a := range d.Attrs {
+			if a == attr {
+				return d.Mailbox, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 func (b *Box) Close() {

@@ -78,12 +78,9 @@ func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, er
 		st:   state.Load(cfg.Pipeline.StatePath),
 		pace: 300 * time.Millisecond,
 	}
-	if cfg.Pipeline.ScanSpam { // 兜底扫垃圾箱：单独的 IMAP 连接选中垃圾箱文件夹
+	if cfg.Pipeline.ScanSpam { // 兜底扫垃圾箱：单独连接；mailbox 留空则 Connect 自动探测 \Junk
 		spamCfg := cfg.IMAP
 		spamCfg.Mailbox = cfg.IMAP.SpamMailbox
-		if spamCfg.Mailbox == "" {
-			spamCfg.Mailbox = "[Gmail]/Spam"
-		}
 		p.spamBox = imap.New(spamCfg)
 	}
 	return p, nil
