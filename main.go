@@ -42,6 +42,7 @@ ocr:
 notify:
   - type: bark
     key: ${BARK_KEY}
+    # icon: https://your.cdn/icon.png   # 推送图标；省略=内置 logo，设为 "" 关闭
 
 pipeline:
   baseline_on_first_run: true

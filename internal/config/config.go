@@ -18,7 +18,7 @@ type IMAP struct {
 }
 
 type Provider struct {
-	Type    string `yaml:"type"`     // codex | openai | ollama
+	Type    string `yaml:"type"` // codex | openai | ollama
 	Model   string `yaml:"model"`
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
@@ -39,13 +39,14 @@ type OCR struct {
 }
 
 type Notifier struct {
-	Type     string `yaml:"type"` // bark | telegram | ntfy | webhook
-	Key      string `yaml:"key"`
-	Server   string `yaml:"server"`
-	BotToken string `yaml:"bot_token"`
-	ChatID   string `yaml:"chat_id"`
-	Topic    string `yaml:"topic"`
-	URL      string `yaml:"url"`
+	Type     string  `yaml:"type"` // bark | telegram | ntfy | webhook
+	Key      string  `yaml:"key"`
+	Server   string  `yaml:"server"`
+	Icon     *string `yaml:"icon"` // Bark 推送图标 URL；不设=内置 logo，设为 "" 可关闭，设 URL 可自定义
+	BotToken string  `yaml:"bot_token"`
+	ChatID   string  `yaml:"chat_id"`
+	Topic    string  `yaml:"topic"`
+	URL      string  `yaml:"url"`
 }
 
 type Pipeline struct {

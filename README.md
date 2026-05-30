@@ -37,10 +37,6 @@
 
 一个 `scp` 上去就能跑的静态二进制 —— 目标机 **不需要 Python / pip / venv**。goroutine 驱动的 IMAP IDLE 带来秒级延迟。
 
-### 为什么是单个 Go 二进制
-
-Cloudflare Workers 托不住它：`codex` 需要子进程、IMAP IDLE 需要常驻长连接 —— 两者在 Workers/WASI 上都不支持。在 CF 上跑 `codex` 只能上付费 Container（约等于租一台小 VM），那 “serverless 省钱” 就没意义了。所以如果总要有台机器，就让它尽量便宜：**一个零依赖静态二进制，交叉编译到任意 Linux / ARM / macOS**。
-
 ### ✨ 特性
 
 - 📦 **单静态二进制** — `go build` 出一个文件；`make cross` 出 linux/amd64·arm64、darwin/arm64…
@@ -100,6 +96,7 @@ ocr:
 notify:
   - type: bark
     key: ${BARK_KEY}
+    # icon: https://your.cdn/icon.png   # 推送图标；省略=内置 mailpilot logo，设为 "" 关闭
   # - type: telegram
   #   bot_token: ${TG_BOT_TOKEN}
   #   chat_id: ${TG_CHAT_ID}
@@ -127,7 +124,7 @@ pipeline:
 
 ### 📱 推送
 
-按分析结果智能映射渠道能力：紧急→破防+声音、垃圾→静默、验证码→可复制、点按→在 Gmail 打开、按分类归组。开箱支持 **Bark / Telegram / ntfy / Webhook**（Webhook 兼容企业微信 / Slack 纯文本字段）。
+按分析结果智能映射渠道能力：紧急→破防+声音、垃圾→静默、验证码→可复制、点按→在 Gmail 打开、按分类归组。开箱支持 **Bark / Telegram / ntfy / Webhook**（Webhook 兼容企业微信 / Slack 纯文本字段）。Bark 默认用 mailpilot 的 logo 作推送图标，可用 `notify[].icon` 改 URL，或设为空串关闭。
 
 ### 🚢 部署
 
@@ -170,10 +167,6 @@ MIT © 2026 wangnov
 `mailpilot` watches your inbox over **IMAP IDLE** and, the moment a new email arrives, runs it through an LLM (your ChatGPT subscription via `codex`, any OpenAI-compatible API, or a local Ollama model), then pushes a structured summary (**category · urgency · one-line · key points**) to your phone via **Bark / Telegram / ntfy / Webhook**.
 
 One static binary you `scp` and run — **no Python / pip / venv on the target host**. goroutine-based IMAP IDLE for second-level latency.
-
-### Why a single Go binary
-
-Cloudflare Workers can't host this: `codex` needs subprocesses and IMAP IDLE wants a long-lived process — both unsupported on Workers/WASI. Running `codex` on Cloudflare would mean a paid Container (≈ renting a small VM), which defeats "serverless to save money". So if you want a server at all, make it as cheap as possible: **one dependency-free static binary, cross-compiled to any Linux / ARM / macOS**.
 
 ### ✨ Features
 
@@ -234,6 +227,7 @@ ocr:
 notify:
   - type: bark
     key: ${BARK_KEY}
+    # icon: https://your.cdn/icon.png   # push icon; omit = built-in mailpilot logo, "" to disable
   # - type: telegram
   #   bot_token: ${TG_BOT_TOKEN}
   #   chat_id: ${TG_CHAT_ID}
@@ -261,7 +255,7 @@ pipeline:
 
 ### 📱 Push
 
-Channel capabilities are mapped from the analysis: urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category. Ships with **Bark / Telegram / ntfy / Webhook** (the Webhook payload is compatible with WeCom / Slack plain-text fields).
+Channel capabilities are mapped from the analysis: urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category. Ships with **Bark / Telegram / ntfy / Webhook** (the Webhook payload is compatible with WeCom / Slack plain-text fields). Bark uses the mailpilot logo as the default push icon — override the URL via `notify[].icon`, or set an empty string to disable.
 
 ### 🚢 Deploy
 
