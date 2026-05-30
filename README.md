@@ -2,10 +2,6 @@
   <img src="./assets/banner.svg" alt="mailpilot — new mail → LLM → your phone" width="100%">
 </p>
 
-<p align="center">
-  <img src="./assets/logo.png" width="132" alt="mailpilot logo">
-</p>
-
 <h1 align="center">mailpilot</h1>
 
 <p align="center">
