@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"mime"
 	"net"
+	netmail "net/mail"
 	"regexp"
 	"strings"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/Wangnov/mailpilot/internal/config"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	gomsgcharset "github.com/emersion/go-message/charset" // 注册 GBK/Big5/Shift-JIS… 解码器(init) + 提供 Reader
 	"github.com/emersion/go-message/mail"
 )
 
@@ -206,6 +209,36 @@ func stripHTML(h string) string {
 	return strings.TrimSpace(wsRe.ReplaceAllString(h, " "))
 }
 
+// fromWordDecoder 解码邮件头里的 RFC 2047 encoded-word（=?utf-8?q?…?= 之类），
+// CharsetReader 复用 go-message/charset.Reader，故 GBK / Big5 / Shift-JIS 等非 UTF-8 字符集也能解。
+var fromWordDecoder = &mime.WordDecoder{CharsetReader: gomsgcharset.Reader}
+
+// decodeAddress 把 From 头解析成干净的「显示名 <地址>」。
+// 为什么不直接用 go-message 的 AddressList()[0].String()：
+//   - mail.Address 是 net/mail.Address 的别名，其 String() 会把非 ASCII 显示名【重新编码】
+//     回 =?utf-8?b?…?=——推送通知里就显示成一串乱码；
+//   - net/mail 对「单个 encoded-word 紧跟 <地址>」的解析有怪癖，会把编码字原样留下不解。
+//
+// 所以这里先把 encoded-word 解成明文（既消除上述怪癖，又兼容非 UTF-8），再解析地址、手工拼装，
+// 全程不调用 .String()，从根上杜绝乱码。
+func decodeAddress(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	dec, err := fromWordDecoder.DecodeHeader(raw)
+	if err != nil || dec == "" {
+		dec = raw
+	}
+	if a, err := netmail.ParseAddress(dec); err == nil {
+		if a.Name != "" && a.Name != a.Address {
+			return a.Name + " <" + a.Address + ">"
+		}
+		return a.Address
+	}
+	return dec // 解析失败也至少返回解码后的明文，绝不留 =?…?= 乱码给下游
+}
+
 func parseMail(uid uint32, raw []byte, maxBody int) *Mail {
 	m := &Mail{UID: uid}
 	mr, err := mail.CreateReader(bytes.NewReader(raw))
@@ -216,9 +249,7 @@ func parseMail(uid uint32, raw []byte, maxBody int) *Mail {
 	if s, err := mr.Header.Subject(); err == nil {
 		m.Subject = s
 	}
-	if addrs, err := mr.Header.AddressList("From"); err == nil && len(addrs) > 0 {
-		m.From = addrs[0].String()
-	}
+	m.From = decodeAddress(mr.Header.Get("From"))
 	if t, err := mr.Header.Date(); err == nil {
 		m.Date = t.Format(time.RFC1123Z)
 	}
