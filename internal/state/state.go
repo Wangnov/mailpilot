@@ -4,6 +4,7 @@ package state
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 )
 
 type State struct {
@@ -36,6 +37,11 @@ func Load(path string) *State {
 
 func (s *State) Save() error {
 	data, _ := json.MarshalIndent(s, "", "  ")
+	if dir := filepath.Dir(s.path); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err

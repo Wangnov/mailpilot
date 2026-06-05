@@ -1,9 +1,12 @@
 package pipeline
 
 import (
+	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
+	"github.com/Wangnov/mailpilot/internal/config"
 	"github.com/Wangnov/mailpilot/internal/imap"
 )
 
@@ -109,5 +112,55 @@ func TestLikelyHasHistory(t *testing.T) {
 		if got := likelyHasHistory(c.m); got != c.want {
 			t.Errorf("case %d: got %v want %v (subject=%q)", i, got, c.want, c.m.Subject)
 		}
+	}
+}
+
+func TestNewRequiresProviderAndNotifier(t *testing.T) {
+	_, err := New(nil, filepath.Join(t.TempDir(), "config.yaml"), nil)
+	if err == nil || !strings.Contains(err.Error(), "配置为空") {
+		t.Fatalf("nil config err=%v", err)
+	}
+
+	_, err = New(&config.Config{Notify: []config.Notifier{{Type: "bark", Key: "k"}}}, filepath.Join(t.TempDir(), "config.yaml"), nil)
+	if err == nil || !strings.Contains(err.Error(), "analyze provider") {
+		t.Fatalf("missing provider err=%v", err)
+	}
+
+	_, err = New(&config.Config{
+		Analyze: config.Analyze{Providers: []config.Provider{{Type: "openai", Model: "m"}}},
+	}, filepath.Join(t.TempDir(), "config.yaml"), nil)
+	if err == nil || !strings.Contains(err.Error(), "notify 渠道") {
+		t.Fatalf("missing notifier err=%v", err)
+	}
+}
+
+func TestNewResolvesStatePathRelativeToConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Analyze: config.Analyze{Providers: []config.Provider{{Type: "openai", Model: "m"}}},
+		Notify:  []config.Notifier{{Type: "bark", Key: "k"}},
+		OCR:     config.OCR{Enabled: false},
+		Pipeline: config.Pipeline{
+			StatePath: "runtime/state.json",
+		},
+	}
+	p, err := New(cfg, filepath.Join(dir, "config.yaml"), func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "runtime", "state.json")
+	if p.cfg.Pipeline.StatePath != want {
+		t.Fatalf("state path=%q, want %q", p.cfg.Pipeline.StatePath, want)
+	}
+}
+
+func TestNewRejectsUnknownOCREngine(t *testing.T) {
+	_, err := New(&config.Config{
+		Analyze: config.Analyze{Providers: []config.Provider{{Type: "openai", Model: "m"}}},
+		Notify:  []config.Notifier{{Type: "bark", Key: "k"}},
+		OCR:     config.OCR{Enabled: true, Type: "made-up"},
+	}, filepath.Join(t.TempDir(), "config.yaml"), nil)
+	if err == nil || !strings.Contains(err.Error(), "未知 OCR 引擎类型") {
+		t.Fatalf("unknown OCR engine err=%v", err)
 	}
 }

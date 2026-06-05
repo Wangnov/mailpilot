@@ -19,7 +19,7 @@ type IMAP struct {
 }
 
 type Provider struct {
-	Type    string `yaml:"type"` // codex | openai | ollama
+	Type    string `yaml:"type"` // codex | openai | gemini | ollama
 	Model   string `yaml:"model"`
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
@@ -128,6 +128,7 @@ func (c *Config) applyDefaults() {
 	d(&c.IMAP.Mailbox, "INBOX")
 	di(&c.Analyze.Timeout, 300)
 	d(&c.Analyze.Language, "中文")
+	d(&c.OCR.Type, "paddle")
 	d(&c.OCR.Model, "PaddleOCR-VL-1.6")
 	d(&c.OCR.JobURL, "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs")
 	di(&c.OCR.MinBody, 30)

@@ -41,6 +41,7 @@ analyze:
 
 ocr:
   enabled: false                  # 需要图片邮件识别再开
+  type: paddle                    # 当前内置 PaddleOCR；后续可扩展其它 OCR 引擎
   token: ${PADDLEOCR_TOKEN}
 
 notify:

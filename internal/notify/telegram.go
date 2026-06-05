@@ -30,7 +30,11 @@ func (n *telegramNotifier) Send(m Message) error {
 		"chat_id": n.cfg.ChatID, "text": text, "parse_mode": "Markdown",
 		"disable_notification": m.Passive(), "disable_web_page_preview": true,
 	}
-	api := "https://api.telegram.org/bot" + n.cfg.BotToken + "/sendMessage"
+	server := n.cfg.Server
+	if server == "" {
+		server = "https://api.telegram.org"
+	}
+	api := strings.TrimRight(server, "/") + "/bot" + n.cfg.BotToken + "/sendMessage"
 	code, body, err := postJSON(api, payload)
 	if err != nil {
 		return err

@@ -94,7 +94,10 @@ func (p *openaiProvider) post(body map[string]any) ([]byte, error) {
 		base = "https://api.openai.com/v1"
 	}
 	buf, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", strings.TrimRight(base, "/")+"/chat/completions", bytes.NewReader(buf))
+	req, err := http.NewRequest("POST", strings.TrimRight(base, "/")+"/chat/completions", bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	if p.cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)

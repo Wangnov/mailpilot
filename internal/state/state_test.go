@@ -25,3 +25,15 @@ func TestBaselineRoundtrip(t *testing.T) {
 		t.Error("failed map not persisted")
 	}
 }
+
+func TestSaveCreatesParentDirectory(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "runtime", "state.json")
+	s := Load(p)
+	s.SetBaseline(2, 200)
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got := Load(p); got.LastUID != 200 || got.UIDValidity != 2 {
+		t.Fatalf("nested state mismatch: %+v", got)
+	}
+}

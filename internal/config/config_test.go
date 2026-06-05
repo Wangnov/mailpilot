@@ -32,6 +32,9 @@ func TestLoadEnvExpandAndDefaults(t *testing.T) {
 	if c.Pipeline.MaxPerRun != 20 {
 		t.Errorf("default max_per_run=%d, want 20", c.Pipeline.MaxPerRun)
 	}
+	if c.OCR.Type != "paddle" {
+		t.Errorf("default ocr.type=%q, want paddle", c.OCR.Type)
+	}
 }
 
 // 回归：密钥含 YAML 特殊字符(: # " 空格)时，解析后展开不应被破坏。

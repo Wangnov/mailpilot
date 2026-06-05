@@ -48,14 +48,24 @@ type Pipeline struct {
 	spamBox   mailbox // 兜底扫描垃圾箱；scan_spam 关闭时为 nil
 	providers []analyze.Provider
 	notifiers []notify.Notifier
+	ocrEngine ocr.Engine
 	st        *state.State
 	pace      time.Duration // 每封之间的间隔（默认 300ms，测试可设 0）
 }
 
 func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, error) {
+	if log == nil {
+		log = func(string) {}
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("配置为空")
+	}
 	// 项目目录 = 配置文件所在目录；codex 临时产物只落在它下面（详见 analyze.BuildProvider）。
 	abs, _ := filepath.Abs(configPath)
 	workDir := filepath.Dir(abs)
+	if len(cfg.Analyze.Providers) == 0 {
+		return nil, fmt.Errorf("至少需要配置一个 analyze provider")
+	}
 	var providers []analyze.Provider
 	for _, pc := range cfg.Analyze.Providers {
 		p, err := analyze.BuildProvider(pc, cfg.Analyze.Timeout, workDir, cfg.Analyze.Language)
@@ -63,6 +73,9 @@ func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, er
 			return nil, err
 		}
 		providers = append(providers, p)
+	}
+	if len(cfg.Notify) == 0 {
+		return nil, fmt.Errorf("至少需要配置一个 notify 渠道")
 	}
 	var notifiers []notify.Notifier
 	for _, nc := range cfg.Notify {
@@ -72,9 +85,19 @@ func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, er
 		}
 		notifiers = append(notifiers, n)
 	}
+	ocrEngine, err := ocr.Build(cfg.OCR, log)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Pipeline.StatePath == "" {
+		cfg.Pipeline.StatePath = "state.json"
+	}
+	if cfg.Pipeline.StatePath != "" && !filepath.IsAbs(cfg.Pipeline.StatePath) {
+		cfg.Pipeline.StatePath = filepath.Join(workDir, cfg.Pipeline.StatePath)
+	}
 	p := &Pipeline{
 		cfg: cfg, log: log, box: imap.New(cfg.IMAP),
-		providers: providers, notifiers: notifiers,
+		providers: providers, notifiers: notifiers, ocrEngine: ocrEngine,
 		st:   state.Load(cfg.Pipeline.StatePath),
 		pace: 300 * time.Millisecond,
 	}
@@ -108,8 +131,8 @@ func (p *Pipeline) processOne(uid uint32, tgt scanTarget) error {
 		p.log(fmt.Sprintf("%suid=%d 取信失败(可能已删)，跳过", tgt.label, uid))
 		return nil
 	}
-	if p.cfg.OCR.Enabled && len([]rune(mail.Body)) < p.cfg.OCR.MinBody && len(mail.Images) > 0 {
-		if t := ocr.Images(mail.Images, p.cfg.OCR, p.log); t != "" {
+	if p.ocrEngine != nil && p.cfg.OCR.Enabled && len([]rune(mail.Body)) < p.cfg.OCR.MinBody && len(mail.Images) > 0 {
+		if t := p.ocrEngine.Images(mail.Images); t != "" {
 			mail.Body = "[此邮件正文主要为图片，以下为 OCR 识别结果]\n" + t
 		}
 	}

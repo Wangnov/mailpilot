@@ -134,6 +134,7 @@ analyze:
 
 ocr:
   enabled: true
+  type: paddle                    # 当前内置 PaddleOCR；后续可扩展其它 OCR 引擎
   token: ${PADDLEOCR_TOKEN}
 
 notify:
@@ -317,6 +318,7 @@ analyze:
 
 ocr:
   enabled: true
+  type: paddle                    # built-in PaddleOCR for now; other OCR engines can be added
   token: ${PADDLEOCR_TOKEN}
 
 notify:

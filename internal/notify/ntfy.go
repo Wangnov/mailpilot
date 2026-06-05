@@ -29,7 +29,10 @@ func (n *ntfyNotifier) Send(m Message) error {
 	}
 	// 中文标题放正文首行，避开 ntfy header 仅 ASCII 的限制
 	text := m.Title + "\n\n" + m.Body
-	req, _ := http.NewRequest("POST", strings.TrimRight(server, "/")+"/"+n.cfg.Topic, strings.NewReader(text))
+	req, err := http.NewRequest("POST", strings.TrimRight(server, "/")+"/"+n.cfg.Topic, strings.NewReader(text))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Priority", priority)
 	req.Header.Set("Tags", "email")
 	if m.URL != "" {
