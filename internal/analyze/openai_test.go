@@ -42,7 +42,7 @@ func TestOpenAIFinalStructured(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &got)
-		content := `{"category":"工作","urgency":"中","summary":"需要处理","needs_reply":true,"key_points":["a"],"suggested_action":"回复"}`
+		content := `{"category":"工作","urgency":"中","summary":"需要处理","needs_reply":true,"key_points":["a"],"suggested_action":"回复","action_url":"https://example.com/ticket/1"}`
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]any{"content": content}}},
 		})

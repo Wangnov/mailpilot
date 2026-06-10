@@ -21,6 +21,7 @@ type Analysis struct {
 	NeedsReply      bool     `json:"needs_reply"`
 	KeyPoints       []string `json:"key_points"`
 	SuggestedAction string   `json:"suggested_action"`
+	ActionURL       string   `json:"action_url"`
 }
 
 type Provider interface {
@@ -104,7 +105,7 @@ func WithFallback(providers []Provider, m *imap.Mail, withHistory bool, toolCmd 
 var OutputSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []string{"category", "urgency", "summary", "needs_reply", "key_points", "suggested_action"},
+	"required":             []string{"category", "urgency", "summary", "needs_reply", "key_points", "suggested_action", "action_url"},
 	"properties": map[string]any{
 		"category":         map[string]any{"type": "string", "enum": []string{"工作", "财务", "账单", "营销推广", "通知", "个人", "验证码", "垃圾", "其他"}},
 		"urgency":          map[string]any{"type": "string", "enum": []string{"高", "中", "低"}},
@@ -112,6 +113,7 @@ var OutputSchema = map[string]any{
 		"needs_reply":      map[string]any{"type": "boolean"},
 		"key_points":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"suggested_action": map[string]any{"type": "string"},
+		"action_url":       map[string]any{"type": "string", "description": "邮件里最适合用户点击处理此事的原始 http(s) 链接；没有可信主链接或不需要跳转时输出空字符串"},
 	},
 }
 
@@ -123,8 +125,9 @@ const SystemPrompt = `你是邮件分析助手，运行在隔离环境中。<std
 - 如提供了历史检索工具，只能用它做只读检索，不要运行其它命令。
 
 【任务】
-分析这封邮件，提取：分类 / 紧急度 / 一句话摘要 / 是否需要本人回复 / 关键信息点 / 建议动作。
+分析这封邮件，提取：分类 / 紧急度 / 一句话摘要 / 是否需要本人回复 / 关键信息点 / 建议动作 / 最适合用户点击处理此事的主链接。
 判断真伪与重要性时，请结合 <mailbox_context> 中邮箱服务商已有的筛选信号一起判断。
+action_url 只能填邮件中原样出现的绝对 http(s) 链接；请选择最核心的行动链接（例如登录验证、确认、查看账单、追踪物流、处理工单），不要填退订、隐私政策、页脚社交链接或发件方首页；没有明确可信主链接时填空字符串。
 
 最终【严格按给定 JSON Schema】输出 JSON，不要输出任何额外文字。`
 

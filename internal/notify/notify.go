@@ -41,7 +41,9 @@ func BuildMessage(mail *imap.Mail, a *analyze.Analysis) Message {
 		title = "(无主题)"
 	}
 	var u, cp string
-	if id := strings.Trim(mail.MessageID, "<>"); id != "" {
+	if actionURL := validatedActionURL(a.ActionURL); actionURL != "" {
+		u = actionURL
+	} else if id := strings.Trim(mail.MessageID, "<>"); id != "" {
 		u = "https://mail.google.com/mail/u/0/#search/" + url.QueryEscape("rfc822msgid:"+id)
 	}
 	if a.Category == "验证码" {
@@ -50,6 +52,23 @@ func BuildMessage(mail *imap.Mail, a *analyze.Analysis) Message {
 	return Message{
 		Title: truncate(title, 120), Body: strings.Join(lines, "\n"),
 		Category: a.Category, Urgency: a.Urgency, URL: u, Copy: cp,
+	}
+}
+
+func validatedActionURL(raw string) string {
+	raw = strings.Trim(strings.TrimSpace(raw), "<>\"'")
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return u.String()
+	default:
+		return ""
 	}
 }
 

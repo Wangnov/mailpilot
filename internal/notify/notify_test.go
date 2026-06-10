@@ -10,7 +10,7 @@ import (
 func TestBuildMessageVerificationCode(t *testing.T) {
 	m := BuildMessage(
 		&imap.Mail{From: "Google", Subject: "验证码", MessageID: "<x@y>"},
-		&analyze.Analysis{Category: "验证码", Urgency: "中", Summary: "登录验证码 123456", KeyPoints: []string{"验证码：123456"}},
+		&analyze.Analysis{Category: "验证码", Urgency: "中", Summary: "登录验证码 123456", KeyPoints: []string{"验证码：123456"}, ActionURL: ""},
 	)
 	if m.Copy != "123456" {
 		t.Errorf("copy=%q, want 123456", m.Copy)
@@ -20,6 +20,26 @@ func TestBuildMessageVerificationCode(t *testing.T) {
 	}
 	if m.Passive() {
 		t.Error("验证码/中 should not be passive")
+	}
+}
+
+func TestBuildMessagePrefersActionURL(t *testing.T) {
+	m := BuildMessage(
+		&imap.Mail{Subject: "确认登录", MessageID: "<x@y>"},
+		&analyze.Analysis{Category: "验证码", Urgency: "中", Summary: "确认登录", ActionURL: "https://example.com/verify?token=abc"},
+	)
+	if m.URL != "https://example.com/verify?token=abc" {
+		t.Errorf("url=%q, want action_url", m.URL)
+	}
+}
+
+func TestBuildMessageRejectsUnsafeActionURL(t *testing.T) {
+	m := BuildMessage(
+		&imap.Mail{Subject: "确认登录", MessageID: "<x@y>"},
+		&analyze.Analysis{Category: "验证码", Urgency: "中", Summary: "确认登录", ActionURL: "javascript:alert(1)"},
+	)
+	if m.URL == "" || m.URL == "javascript:alert(1)" {
+		t.Errorf("unsafe action_url should fall back to Gmail URL, got %q", m.URL)
 	}
 }
 

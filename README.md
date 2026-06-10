@@ -44,7 +44,7 @@
 - 🧠 **多 provider 自动降级** — `codex`（订阅）→ `openai`/兼容端点 → `gemini` → `ollama`（本地）
 - 🔎 **每个有能力的 provider 都能做 agentic 历史检索** — 当邮件像是某讨论串 / issue 的后续时，模型可自主先检索相关历史邮件再作答。`codex` 用它自己的 agent loop；`openai` 用**内置 function-calling 循环**（不挂 LangChain，约一个文件）。降级到 `openai` 也不丢历史上下文。
 - 🖼️ **图片邮件 OCR** — 正文为空的纯图片邮件 → 先过 PaddleOCR 再分析
-- 📱 **智能多渠道推送** — 紧急→破防+声音，垃圾/营销→静默，验证码→可复制，点按→在 Gmail 打开，按分类归组
+- 📱 **智能多渠道推送** — 紧急→破防+声音，垃圾/营销→静默，验证码→可复制，点按→打开邮件主链接（无主链接则回退 Gmail），按分类归组
 - ♻️ **可靠** — 去重水位线 + 重试队列 + 首跑基线 + IDLE 断线自动重连
 - 🔒 **安全** — 只读 IMAP，邮件正文视为不可信，prompt-injection 硬化；`codex` 被关进项目内一次性沙箱
 
@@ -171,7 +171,7 @@ pipeline:
 
 ### 📱 推送
 
-按分析结果智能映射渠道能力：紧急→破防+声音、垃圾→静默、验证码→可复制、点按→在 Gmail 打开、按分类归组。开箱支持 **Bark / Telegram / ntfy / Webhook**（Webhook 兼容企业微信 / Slack 纯文本字段）。Bark 默认用 mailpilot 的 logo 作推送图标，可用 `notify[].icon` 改 URL，或设为空串关闭。
+按分析结果智能映射渠道能力：紧急→破防+声音、垃圾→静默、验证码→可复制、点按→打开邮件主链接（无主链接则回退 Gmail）、按分类归组。开箱支持 **Bark / Telegram / ntfy / Webhook**（Webhook 兼容企业微信 / Slack 纯文本字段）。Bark 默认用 mailpilot 的 logo 作推送图标，可用 `notify[].icon` 改 URL，或设为空串关闭。
 
 **垃圾 / 营销邮件**：`垃圾`、`营销推广`、`低` 默认走**静音**推送（仍进通知中心、不响铃）；想彻底不推某些分类，配 `pipeline.skip_categories: [垃圾, 营销推广]`（这些邮件仍会被分析，只是不推）。
 
@@ -228,7 +228,7 @@ One static binary you `scp` and run — **no Python / pip / venv on the target h
 - 🧠 **Multi-provider with fallback** — `codex` (subscription) → `openai`/compatible → `gemini` → `ollama` (local)
 - 🔎 **Agentic history lookup, on every capable provider** — when a mail looks like a thread/issue reply, the model can autonomously search related past mail before answering. `codex` uses its own agent loop; `openai` uses a **built-in function-calling loop** (no LangChain, ~one file). So you don't lose history context when falling back off `codex`.
 - 🖼️ **Image emails OCR'd** — empty-body image mail → PaddleOCR before analysis
-- 📱 **Smart multi-channel push** — urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category
+- 📱 **Smart multi-channel push** — urgent→break-through+sound, spam→silent, codes→copyable, tap→open the mail's primary link (fallback to Gmail), grouped by category
 - ♻️ **Reliable** — dedup watermark + retry queue + first-run baseline + IDLE auto-reconnect
 - 🔒 **Safe** — read-only IMAP, body treated as untrusted, prompt-injection hardened; `codex` confined to a throwaway project-local sandbox
 
@@ -355,7 +355,7 @@ pipeline:
 
 ### 📱 Push
 
-Channel capabilities are mapped from the analysis: urgent→break-through+sound, spam→silent, codes→copyable, tap→open in Gmail, grouped by category. Ships with **Bark / Telegram / ntfy / Webhook** (the Webhook payload is compatible with WeCom / Slack plain-text fields). Bark uses the mailpilot logo as the default push icon — override the URL via `notify[].icon`, or set an empty string to disable.
+Channel capabilities are mapped from the analysis: urgent→break-through+sound, spam→silent, codes→copyable, tap→open the mail's primary link (fallback to Gmail), grouped by category. Ships with **Bark / Telegram / ntfy / Webhook** (the Webhook payload is compatible with WeCom / Slack plain-text fields). Bark uses the mailpilot logo as the default push icon — override the URL via `notify[].icon`, or set an empty string to disable.
 
 **Spam / marketing:** `垃圾`, `营销推广`, and `低` default to **silent** pushes (still in Notification Center, no alert); to drop certain categories entirely, set `pipeline.skip_categories: [垃圾, 营销推广]` (those mails are still analyzed, just not pushed).
 

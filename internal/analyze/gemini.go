@@ -44,8 +44,9 @@ func geminiSchema() *genai.Schema {
 			"needs_reply":      {Type: genai.TypeBoolean},
 			"key_points":       {Type: genai.TypeArray, Items: &genai.Schema{Type: genai.TypeString}},
 			"suggested_action": {Type: genai.TypeString},
+			"action_url":       {Type: genai.TypeString},
 		},
-		Required: []string{"category", "urgency", "summary", "needs_reply", "key_points", "suggested_action"},
+		Required: []string{"category", "urgency", "summary", "needs_reply", "key_points", "suggested_action", "action_url"},
 	}
 }
 

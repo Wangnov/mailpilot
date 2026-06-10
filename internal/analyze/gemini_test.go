@@ -10,8 +10,8 @@ import (
 
 func TestGeminiSchema(t *testing.T) {
 	s := geminiSchema()
-	if len(s.Required) != 6 {
-		t.Errorf("required=%d, want 6", len(s.Required))
+	if len(s.Required) != 7 {
+		t.Errorf("required=%d, want 7", len(s.Required))
 	}
 	if c := s.Properties["category"]; c == nil || len(c.Enum) != 9 {
 		t.Error("category 枚举应有 9 个值")
@@ -21,6 +21,9 @@ func TestGeminiSchema(t *testing.T) {
 	}
 	if kp := s.Properties["key_points"]; kp == nil || kp.Items == nil {
 		t.Error("key_points 应为带 items 的数组")
+	}
+	if au := s.Properties["action_url"]; au == nil {
+		t.Error("action_url 应存在")
 	}
 }
 
