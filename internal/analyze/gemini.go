@@ -38,15 +38,16 @@ func geminiSchema() *genai.Schema {
 	return &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
-			"category":         {Type: genai.TypeString, Enum: []string{"工作", "财务", "账单", "营销推广", "通知", "个人", "验证码", "垃圾", "其他"}},
-			"urgency":          {Type: genai.TypeString, Enum: []string{"高", "中", "低"}},
-			"summary":          {Type: genai.TypeString},
-			"needs_reply":      {Type: genai.TypeBoolean},
-			"key_points":       {Type: genai.TypeArray, Items: &genai.Schema{Type: genai.TypeString}},
-			"suggested_action": {Type: genai.TypeString},
-			"action_url":       {Type: genai.TypeString},
+			"category":          {Type: genai.TypeString, Enum: []string{"工作", "财务", "账单", "营销推广", "通知", "个人", "验证码", "垃圾", "其他"}},
+			"urgency":           {Type: genai.TypeString, Enum: []string{"高", "中", "低"}},
+			"summary":           {Type: genai.TypeString},
+			"needs_reply":       {Type: genai.TypeBoolean},
+			"key_points":        {Type: genai.TypeArray, Items: &genai.Schema{Type: genai.TypeString}},
+			"suggested_action":  {Type: genai.TypeString},
+			"verification_code": {Type: genai.TypeString},
+			"action_url":        {Type: genai.TypeString},
 		},
-		Required: []string{"category", "urgency", "summary", "needs_reply", "key_points", "suggested_action", "action_url"},
+		Required: []string{"category", "urgency", "summary", "needs_reply", "key_points", "suggested_action", "verification_code", "action_url"},
 	}
 }
 

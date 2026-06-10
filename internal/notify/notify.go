@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -25,8 +24,6 @@ func (m Message) Passive() bool {
 	return m.Category == "垃圾" || m.Category == "营销推广" || m.Urgency == "低"
 }
 func (m Message) High() bool { return m.Urgency == "高" }
-
-var codeRe = regexp.MustCompile(`\b\d{4,8}\b`)
 
 func BuildMessage(mail *imap.Mail, a *analyze.Analysis) Message {
 	lines := []string{"👤 " + truncate(mail.From, 80), "💬 " + a.Summary}
@@ -46,13 +43,20 @@ func BuildMessage(mail *imap.Mail, a *analyze.Analysis) Message {
 	} else if id := strings.Trim(mail.MessageID, "<>"); id != "" {
 		u = "https://mail.google.com/mail/u/0/#search/" + url.QueryEscape("rfc822msgid:"+id)
 	}
-	if a.Category == "验证码" {
-		cp = codeRe.FindString(a.Summary + " " + strings.Join(a.KeyPoints, " "))
-	}
+	cp = copyableVerificationCode(a.VerificationCode)
 	return Message{
 		Title: truncate(title, 120), Body: strings.Join(lines, "\n"),
 		Category: a.Category, Urgency: a.Urgency, URL: u, Copy: cp,
 	}
+}
+
+func copyableVerificationCode(raw string) string {
+	code := strings.Trim(strings.TrimSpace(raw), "\"'")
+	code = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(code)
+	if len([]rune(code)) > 128 {
+		return truncate(code, 128)
+	}
+	return code
 }
 
 func validatedActionURL(raw string) string {

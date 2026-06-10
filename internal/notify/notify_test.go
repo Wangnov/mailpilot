@@ -10,16 +10,26 @@ import (
 func TestBuildMessageVerificationCode(t *testing.T) {
 	m := BuildMessage(
 		&imap.Mail{From: "Google", Subject: "验证码", MessageID: "<x@y>"},
-		&analyze.Analysis{Category: "验证码", Urgency: "中", Summary: "登录验证码 123456", KeyPoints: []string{"验证码：123456"}, ActionURL: ""},
+		&analyze.Analysis{Category: "验证码", Urgency: "中", Summary: "登录验证码", KeyPoints: []string{"验证码：AB12-CD"}, VerificationCode: "AB12-CD"},
 	)
-	if m.Copy != "123456" {
-		t.Errorf("copy=%q, want 123456", m.Copy)
+	if m.Copy != "AB12-CD" {
+		t.Errorf("copy=%q, want AB12-CD", m.Copy)
 	}
 	if m.URL == "" {
 		t.Error("url should be set when MessageID present")
 	}
 	if m.Passive() {
 		t.Error("验证码/中 should not be passive")
+	}
+}
+
+func TestBuildMessageDoesNotInferCopyFromSummary(t *testing.T) {
+	m := BuildMessage(
+		&imap.Mail{From: "Google", Subject: "验证码", MessageID: "<x@y>"},
+		&analyze.Analysis{Category: "验证码", Urgency: "中", Summary: "验证码 123456", KeyPoints: []string{"请输入 123456"}, VerificationCode: ""},
+	)
+	if m.Copy != "" {
+		t.Errorf("copy=%q, want empty when verification_code is empty", m.Copy)
 	}
 }
 
