@@ -17,15 +17,22 @@ import (
 // ---- fakes ----
 
 type fakeBox struct {
-	uids []uint32
-	uidv uint32
+	uids      []uint32
+	uidv      uint32
+	err       error
+	mailByUID map[uint32]*imap.Mail
 }
 
 func (f *fakeBox) Connect() error               { return nil }
 func (f *fakeBox) Close()                       {}
-func (f *fakeBox) UIDValidity() (uint32, error) { return f.uidv, nil }
+func (f *fakeBox) UIDValidity() (uint32, error) { return f.uidv, f.err }
 func (f *fakeBox) AllUIDs() ([]uint32, error)   { return append([]uint32(nil), f.uids...), nil }
 func (f *fakeBox) Fetch(uid uint32, _ int) (*imap.Mail, error) {
+	if f.mailByUID != nil {
+		if m := f.mailByUID[uid]; m != nil {
+			return m, nil
+		}
+	}
 	return &imap.Mail{UID: uid, Subject: fmt.Sprintf("m%d", uid), From: "a@b.com", Mailbox: "INBOX"}, nil
 }
 
@@ -47,9 +54,15 @@ func (f *fakeProvider) Analyze(m *imap.Mail, _ bool, _ string) (*analyze.Analysi
 type fakeNotifier struct {
 	sent []string
 	err  error
+	name string
 }
 
-func (f *fakeNotifier) Name() string { return "fakeN" }
+func (f *fakeNotifier) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "fakeN"
+}
 func (f *fakeNotifier) Send(m notify.Message) error {
 	if f.err != nil {
 		return f.err
@@ -58,14 +71,31 @@ func (f *fakeNotifier) Send(m notify.Message) error {
 	return nil
 }
 
+type fakeOCR struct {
+	called bool
+	text   string
+}
+
+func (f *fakeOCR) Name() string { return "fakeOCR" }
+func (f *fakeOCR) Images(_ [][]byte) string {
+	f.called = true
+	return f.text
+}
+
 func testPipe(t *testing.T, box mailbox, prov analyze.Provider, n *fakeNotifier, baseline bool, skip []string) *Pipeline {
 	t.Helper()
 	cfg := &config.Config{}
 	cfg.Pipeline = config.Pipeline{BaselineOnFirstRun: baseline, MaxPerRun: 20, MaxRetry: 3, MaxBodyChars: 1000, SkipCategories: skip}
+	statePath := filepath.Join(t.TempDir(), "s.json")
+	cfg.Pipeline.StatePath = statePath
+	st, err := state.Load(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &Pipeline{
 		cfg: cfg, log: func(string) {}, box: box,
 		providers: []analyze.Provider{prov}, notifiers: []notify.Notifier{n},
-		st: state.Load(filepath.Join(t.TempDir(), "s.json")), pace: 0,
+		st: st, pace: 0,
 	}
 }
 
@@ -198,5 +228,118 @@ func TestRunOnceNotifyFailureRetries(t *testing.T) {
 	// 通知失败属暂时性：邮件应一直留在重试队列，不被放弃
 	if c, ok := p.st.Failed["1"]; !ok || c >= p.cfg.Pipeline.MaxRetry {
 		t.Errorf("通知失败应保留重试，failed[1]=%d ok=%v", c, ok)
+	}
+}
+
+func TestProcessOneIgnoresHTMLLinkBlockForOCRThreshold(t *testing.T) {
+	box := &fakeBox{
+		uids: []uint32{1}, uidv: 7,
+		mailByUID: map[uint32]*imap.Mail{
+			1: {
+				UID: 1, Subject: "image button", From: "a@b.com", Mailbox: "INBOX",
+				Body:   "[HTML 链接]\nhttps://example.com/confirm?token=abc",
+				Images: [][]byte{[]byte(strings.Repeat("x", 2049))},
+			},
+		},
+	}
+	n := &fakeNotifier{}
+	p := testPipe(t, box, &fakeProvider{a: okAnalysis("工作")}, n, false, nil)
+	p.cfg.OCR.Enabled = true
+	p.cfg.OCR.MinBody = 30
+	ocr := &fakeOCR{text: "图片验证码 294817"}
+	p.ocrEngine = ocr
+
+	if err := p.processOne(1, p.inboxTarget()); err != nil {
+		t.Fatal(err)
+	}
+	if !ocr.called {
+		t.Fatal("OCR should run when body only contains preserved HTML links")
+	}
+}
+
+func TestProcessOneIgnoresInlinePreservedURLForOCRThreshold(t *testing.T) {
+	box := &fakeBox{
+		uids: []uint32{1}, uidv: 7,
+		mailByUID: map[uint32]*imap.Mail{
+			1: {
+				UID: 1, Subject: "image link", From: "a@b.com", Mailbox: "INBOX",
+				Body:   "确认 (https://example.com/confirm?token=" + strings.Repeat("a", 80) + ")",
+				Images: [][]byte{[]byte(strings.Repeat("x", 2049))},
+			},
+		},
+	}
+	n := &fakeNotifier{}
+	p := testPipe(t, box, &fakeProvider{a: okAnalysis("工作")}, n, false, nil)
+	p.cfg.OCR.Enabled = true
+	p.cfg.OCR.MinBody = 30
+	ocr := &fakeOCR{text: "图片验证码 294817"}
+	p.ocrEngine = ocr
+
+	if err := p.processOne(1, p.inboxTarget()); err != nil {
+		t.Fatal(err)
+	}
+	if !ocr.called {
+		t.Fatal("OCR should run when body only has short link text plus a preserved URL")
+	}
+}
+
+func TestRunOnceUIDValidityErrorDoesNotBaseline(t *testing.T) {
+	box := &fakeBox{uids: []uint32{1, 2, 3}, err: errors.New("status failed")}
+	n := &fakeNotifier{}
+	p := testPipe(t, box, &fakeProvider{a: okAnalysis("工作")}, n, true, nil)
+	if err := p.RunOnce(); err == nil {
+		t.Fatal("UIDValidity error should stop the run")
+	}
+	if p.st.BaselineDone || p.st.LastUID != 0 {
+		t.Fatalf("state should not be baselined on UIDValidity error: %+v", p.st)
+	}
+}
+
+func TestRunOncePartialNotifyRetriesOnlyFailedChannel(t *testing.T) {
+	box := &fakeBox{uids: []uint32{1}, uidv: 7}
+	okN := &fakeNotifier{name: "ok"}
+	flaky := &fakeNotifier{name: "flaky", err: errors.New("down")}
+	p := testPipe(t, box, &fakeProvider{a: okAnalysis("工作")}, okN, false, nil)
+	p.notifiers = []notify.Notifier{okN, flaky}
+
+	if err := p.RunOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if len(okN.sent) != 1 {
+		t.Fatalf("first run should send ok channel once, got %d", len(okN.sent))
+	}
+	if _, ok := p.st.Delivered["1"]["00:ok"]; !ok {
+		t.Fatalf("successful channel should be persisted: %+v", p.st.Delivered)
+	}
+
+	flaky.err = nil
+	if err := p.RunOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if len(okN.sent) != 1 {
+		t.Fatalf("ok channel should not be duplicated, got %d sends", len(okN.sent))
+	}
+	if len(p.st.Failed) != 0 || len(p.st.Delivered) != 0 {
+		t.Fatalf("success should clear retry state: failed=%v delivered=%v", p.st.Failed, p.st.Delivered)
+	}
+}
+
+func TestNotifyPendingPersistsBeforeWatermarkAdvance(t *testing.T) {
+	box := &fakeBox{uids: []uint32{1}, uidv: 7}
+	n1 := &fakeNotifier{name: "one"}
+	n2 := &fakeNotifier{name: "two"}
+	p := testPipe(t, box, &fakeProvider{a: okAnalysis("工作")}, n1, false, nil)
+	p.notifiers = []notify.Notifier{n1, n2}
+
+	err := p.notifyPending(p.inboxTarget(), 1, &imap.Mail{UID: 1, Subject: "m1"}, okAnalysis("工作"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := state.Load(p.cfg.Pipeline.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.Delivered["1"]["00:one"] || !saved.Delivered["1"]["01:two"] {
+		t.Fatalf("all successful channels should be durable before watermark advance: %+v", saved.Delivered)
 	}
 }

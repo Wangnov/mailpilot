@@ -9,7 +9,7 @@ import (
 	"mime"
 	"net"
 	netmail "net/mail"
-	"regexp"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +19,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	gomsgcharset "github.com/emersion/go-message/charset" // 注册 GBK/Big5/Shift-JIS… 解码器(init) + 提供 Reader
 	"github.com/emersion/go-message/mail"
+	"golang.org/x/net/html"
 )
 
 type Mail struct {
@@ -55,6 +56,7 @@ func (b *Box) Connect() error {
 	}
 	tlsConn := tls.Client(conn, &tls.Config{ServerName: b.cfg.Host})
 	if err := tlsConn.Handshake(); err != nil {
+		_ = tlsConn.Close()
 		return err
 	}
 	opts := &imapclient.Options{
@@ -197,16 +199,93 @@ func (b *Box) IdleLoop(onNew func(), timeout time.Duration) error {
 
 // ---- MIME 解析 ----
 
-var (
-	scriptRe = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
-	tagRe    = regexp.MustCompile(`(?s)<[^>]+>`)
-	wsRe     = regexp.MustCompile(`\s+`)
-)
-
 func stripHTML(h string) string {
-	h = scriptRe.ReplaceAllString(h, " ")
-	h = tagRe.ReplaceAllString(h, " ")
-	return strings.TrimSpace(wsRe.ReplaceAllString(h, " "))
+	return strings.TrimSpace(strings.Join(htmlTokens(h, true), " "))
+}
+
+func htmlLinks(h string) []string {
+	return htmlTokens(h, false)
+}
+
+func htmlTokens(h string, includeText bool) []string {
+	z := html.NewTokenizer(strings.NewReader(h))
+	var out []string
+	var linkStack []string
+	var skip string
+	seenLinks := map[string]bool{}
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return out
+		case html.StartTagToken:
+			t := z.Token()
+			name := strings.ToLower(t.Data)
+			if name == "script" || name == "style" {
+				skip = name
+				continue
+			}
+			if name == "a" {
+				href := ""
+				for _, a := range t.Attr {
+					if strings.EqualFold(a.Key, "href") {
+						href = cleanHTTPURL(a.Val)
+						break
+					}
+				}
+				linkStack = append(linkStack, href)
+				if !includeText && href != "" && !seenLinks[href] {
+					out = append(out, href)
+					seenLinks[href] = true
+				}
+			}
+		case html.EndTagToken:
+			t := z.Token()
+			name := strings.ToLower(t.Data)
+			if skip == name {
+				skip = ""
+				continue
+			}
+			if name == "a" && len(linkStack) > 0 {
+				linkStack = linkStack[:len(linkStack)-1]
+			}
+		case html.TextToken:
+			if skip != "" {
+				continue
+			}
+			text := strings.TrimSpace(string(z.Text()))
+			if text == "" {
+				continue
+			}
+			text = strings.Join(strings.Fields(text), " ")
+			href := ""
+			if len(linkStack) > 0 {
+				href = linkStack[len(linkStack)-1]
+			}
+			if includeText {
+				if href != "" {
+					out = append(out, text+" ("+href+")")
+				} else {
+					out = append(out, text)
+				}
+			} else if href != "" && !seenLinks[href] {
+				out = append(out, href)
+				seenLinks[href] = true
+			}
+		}
+	}
+}
+
+func cleanHTTPURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return ""
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return u.String()
+	default:
+		return ""
+	}
 }
 
 // fromWordDecoder 解码邮件头里的 RFC 2047 encoded-word（=?utf-8?q?…?= 之类），
@@ -289,11 +368,100 @@ func parseMail(uid uint32, raw []byte, maxBody int) *Mail {
 		}
 	}
 	body := strings.TrimSpace(plain.String())
+	htmlRaw := html.String()
+	htmlBody := stripHTML(htmlRaw)
 	if body == "" {
-		body = stripHTML(html.String())
+		body = htmlBody
 	}
-	m.Body = clip(body, maxBody) // 不再剥离 URL：工具受限(只读检索)，保留链接才能正确判别内容/真伪
+	m.Body = appendHTMLLinks(body, htmlRaw, maxBody) // 不再剥离 URL：工具受限(只读检索)，保留链接才能正确判别内容/真伪
 	return m
+}
+
+func appendHTMLLinks(body, htmlRaw string, maxBytes int) string {
+	links := htmlLinks(htmlRaw)
+	if len(links) == 0 {
+		return clip(body, maxBytes)
+	}
+	if maxBytes <= 0 {
+		links = missingLinks(links, body)
+		if len(links) == 0 {
+			return body
+		}
+		linkBlock := "[HTML 链接]\n" + strings.Join(links, "\n")
+		if strings.TrimSpace(body) == "" {
+			return linkBlock
+		}
+		return body + "\n\n" + linkBlock
+	}
+
+	// 链接优先进入截断预算：纯文本里较晚出现的链接不能因为正文太长而丢失。
+	linkBlock := boundedHTMLLinkBlock(links, maxBytes)
+	if linkBlock == "" {
+		return clip(body, maxBytes)
+	}
+	bodyBudget := remainingBodyBudget(maxBytes, linkBlock, strings.TrimSpace(body) != "")
+	clippedBody := clipToBudget(body, bodyBudget)
+	links = missingLinks(links, clippedBody)
+	if len(links) == 0 {
+		return clip(body, maxBytes)
+	}
+	linkBlock = boundedHTMLLinkBlock(links, maxBytes)
+	if linkBlock == "" {
+		return clip(body, maxBytes)
+	}
+	bodyBudget = remainingBodyBudget(maxBytes, linkBlock, strings.TrimSpace(body) != "")
+	clippedBody = clipToBudget(body, bodyBudget)
+	if strings.TrimSpace(clippedBody) == "" {
+		return linkBlock
+	}
+	return clippedBody + "\n\n" + linkBlock
+}
+
+func missingLinks(links []string, body string) []string {
+	var missing []string
+	for _, link := range links {
+		if !strings.Contains(body, link) {
+			missing = append(missing, link)
+		}
+	}
+	return missing
+}
+
+func boundedHTMLLinkBlock(links []string, maxBytes int) string {
+	if len(links) == 0 {
+		return ""
+	}
+	block := "[HTML 链接]"
+	for _, link := range links {
+		next := block + "\n" + link
+		if maxBytes > 0 && len(next) > maxBytes {
+			continue
+		}
+		block = next
+	}
+	if block == "[HTML 链接]" {
+		return ""
+	}
+	return block
+}
+
+func remainingBodyBudget(maxBytes int, linkBlock string, hasBody bool) int {
+	sepLen := 0
+	if hasBody {
+		sepLen = len("\n\n")
+	}
+	budget := maxBytes - len(linkBlock) - sepLen
+	if budget < 0 {
+		return 0
+	}
+	return budget
+}
+
+func clipToBudget(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	return clip(s, maxBytes)
 }
 
 // clip 按字节上限截断，并回退到合法 UTF-8 边界（不切碎多字节中文字符）。

@@ -72,11 +72,99 @@ Subject: HTML only
 MIME-Version: 1.0
 Content-Type: text/html; charset=utf-8
 
-<html><body><style>.x{}</style><p>Hello <b>世界</b></p><script>alert(1)</script></body></html>`)
+<html><body><style>.x{}</style><p>Hello <b>世界</b></p><a href="https://example.com/action?token=abc">确认</a><script>alert(1)</script></body></html>`)
 
 	m := parseMail(7, []byte(raw), 0)
-	if m.Body != "Hello 世界" {
+	if m.Body != "Hello 世界 确认 (https://example.com/action?token=abc)" {
 		t.Fatalf("html body=%q", m.Body)
+	}
+}
+
+func TestParseMailKeepsImageOnlyHTMLLink(t *testing.T) {
+	raw := crlf(`From: Bob <bob@example.com>
+Subject: Image button
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><a href="https://example.com/confirm?token=abc"><img src="cid:button"></a></body></html>`)
+
+	m := parseMail(9, []byte(raw), 0)
+	if m.Body != "[HTML 链接]\nhttps://example.com/confirm?token=abc" {
+		t.Fatalf("image-only html link should be preserved: %q", m.Body)
+	}
+}
+
+func TestParseMailKeepsHTMLLinksAlongsidePlain(t *testing.T) {
+	raw := crlf(`From: Bob <bob@example.com>
+Subject: Mixed
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b"
+
+--b
+Content-Type: text/plain; charset=utf-8
+
+plain body
+--b
+Content-Type: text/html; charset=utf-8
+
+<a href="https://example.com/pay?id=1">Pay now</a><a href="javascript:alert(1)">bad</a>
+--b--`)
+
+	m := parseMail(8, []byte(raw), 0)
+	if !strings.Contains(m.Body, "plain body\n\n[HTML 链接]\nhttps://example.com/pay?id=1") {
+		t.Fatalf("mixed body should keep html link: %q", m.Body)
+	}
+	if strings.Contains(m.Body, "javascript:") {
+		t.Fatalf("unsafe link should be dropped: %q", m.Body)
+	}
+}
+
+func TestParseMailKeepsLateHTMLLinkWhenBodyIsClipped(t *testing.T) {
+	link := "https://example.com/pay?id=late"
+	raw := crlf(`From: Bob <bob@example.com>
+Subject: Long mixed
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b"
+
+--b
+Content-Type: text/plain; charset=utf-8
+
+` + strings.Repeat("x", 80) + ` ` + link + `
+--b
+Content-Type: text/html; charset=utf-8
+
+<a href="` + link + `">Pay now</a>
+--b--`)
+
+	m := parseMail(10, []byte(raw), 70)
+	if len(m.Body) > 70 {
+		t.Fatalf("body should be clipped to budget: len=%d body=%q", len(m.Body), m.Body)
+	}
+	if !strings.Contains(m.Body, "[HTML 链接]\n"+link) {
+		t.Fatalf("late link should be preserved after clipping: %q", m.Body)
+	}
+}
+
+func TestParseMailDropsBodyWhenHTMLLinkBlockConsumesBudget(t *testing.T) {
+	link := "https://example.com/pay"
+	raw := crlf(`From: Bob <bob@example.com>
+Subject: Budget
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b"
+
+--b
+Content-Type: text/plain; charset=utf-8
+
+` + strings.Repeat("x", 200) + `
+--b
+Content-Type: text/html; charset=utf-8
+
+<a href="` + link + `">Pay now</a>
+--b--`)
+
+	m := parseMail(11, []byte(raw), len("[HTML 链接]\n"+link))
+	if m.Body != "[HTML 链接]\n"+link {
+		t.Fatalf("body should only contain bounded link block: len=%d body=%q", len(m.Body), m.Body)
 	}
 }
 

@@ -3,6 +3,7 @@ package analyze
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/Wangnov/mailpilot/internal/config"
@@ -40,4 +41,36 @@ func TestCodexProviderE2E(t *testing.T) {
 	}
 	t.Logf("codex 结果: category=%s urgency=%s needs_reply=%v summary=%q points=%v",
 		a.Category, a.Urgency, a.NeedsReply, a.Summary, a.KeyPoints)
+}
+
+func TestMinimalCodexEnvDropsMailSecrets(t *testing.T) {
+	t.Setenv("IMAP_PASSWORD", "secret")
+	t.Setenv("OPENAI_API_KEY", "secret")
+	t.Setenv("BARK_KEY", "secret")
+	t.Setenv("MAILPILOT_CONFIG", "/tmp/config.yaml")
+	t.Setenv("PATH", "/bin")
+	t.Setenv("HTTPS_PROXY", "http://proxy.example:8080")
+	t.Setenv("NO_PROXY", "localhost,127.0.0.1")
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/corp.pem")
+	t.Setenv("REQUESTS_CA_BUNDLE", "/etc/ssl/requests.pem")
+
+	env := strings.Join(minimalCodexEnv(), "\n")
+	for _, key := range []string{"IMAP_PASSWORD=", "OPENAI_API_KEY=", "BARK_KEY=", "MAILPILOT_CONFIG="} {
+		if strings.Contains(env, key) {
+			t.Fatalf("secret env %s should not be passed: %s", key, env)
+		}
+	}
+	if !strings.Contains(env, "PATH=/bin") {
+		t.Fatalf("PATH should be preserved: %s", env)
+	}
+	for _, want := range []string{
+		"HTTPS_PROXY=http://proxy.example:8080",
+		"NO_PROXY=localhost,127.0.0.1",
+		"SSL_CERT_FILE=/etc/ssl/corp.pem",
+		"REQUESTS_CA_BUNDLE=/etc/ssl/requests.pem",
+	} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("network/cert env %q should be preserved: %s", want, env)
+		}
+	}
 }

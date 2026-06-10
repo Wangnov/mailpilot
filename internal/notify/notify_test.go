@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Wangnov/mailpilot/internal/analyze"
@@ -15,12 +16,19 @@ func TestBuildMessageVerificationCode(t *testing.T) {
 	if m.Copy != "AB12-CD" {
 		t.Errorf("copy=%q, want AB12-CD", m.Copy)
 	}
+	if want := "验证码: AB12-CD"; !contains(m.Body, want) {
+		t.Errorf("body should include copyable code %q: %q", want, m.Body)
+	}
 	if m.URL == "" {
 		t.Error("url should be set when MessageID present")
 	}
 	if m.Passive() {
 		t.Error("验证码/中 should not be passive")
 	}
+}
+
+func contains(s, sub string) bool {
+	return strings.Contains(s, sub)
 }
 
 func TestBuildMessageDoesNotInferCopyFromSummary(t *testing.T) {

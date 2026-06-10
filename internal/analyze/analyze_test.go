@@ -67,3 +67,27 @@ func TestMailboxContext(t *testing.T) {
 		t.Error("empty mailbox should yield no context")
 	}
 }
+
+func TestParseAnalysisValidation(t *testing.T) {
+	good := []byte(`prefix {"category":"工作","urgency":"中","summary":"需要处理","needs_reply":true,"key_points":[],"suggested_action":"回复","verification_code":"","action_url":"https://example.com/t"} suffix`)
+	if a, err := parseAnalysis(good); err != nil || a.Category != "工作" {
+		t.Fatalf("good analysis err=%v a=%+v", err, a)
+	}
+	wrappedURL := []byte(`{"category":"工作","urgency":"中","summary":"需要处理","needs_reply":true,"key_points":[],"suggested_action":"回复","verification_code":"","action_url":" \t<https://example.com/t>\n"}`)
+	if a, err := parseAnalysis(wrappedURL); err != nil || a.ActionURL != "https://example.com/t" {
+		t.Fatalf("wrapped action_url should be normalized, err=%v a=%+v", err, a)
+	}
+
+	cases := []string{
+		`{"category":"未知","urgency":"中","summary":"s","needs_reply":false,"key_points":[],"suggested_action":"","verification_code":"","action_url":""}`,
+		`{"category":"工作","urgency":"紧急","summary":"s","needs_reply":false,"key_points":[],"suggested_action":"","verification_code":"","action_url":""}`,
+		`{"category":"工作","urgency":"中","summary":"","needs_reply":false,"key_points":[],"suggested_action":"","verification_code":"","action_url":""}`,
+		`{"category":"工作","urgency":"中","summary":"s","needs_reply":false,"suggested_action":"","verification_code":"","action_url":""}`,
+		`{"category":"工作","urgency":"中","summary":"s","needs_reply":false,"key_points":[],"suggested_action":"","verification_code":"","action_url":"javascript:alert(1)"}`,
+	}
+	for _, raw := range cases {
+		if _, err := parseAnalysis([]byte(raw)); err == nil {
+			t.Fatalf("invalid analysis should fail: %s", raw)
+		}
+	}
+}

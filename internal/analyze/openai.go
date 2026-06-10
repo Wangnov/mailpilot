@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ func (p *openaiProvider) SupportsTools() bool { return true }
 const maxToolRounds = 4
 
 func (p *openaiProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) (*Analysis, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.timeout)*time.Second)
+	defer cancel()
 	messages := []map[string]any{
 		{"role": "system", "content": systemPromptFor(p.language)},
 		{"role": "user", "content": buildStdin(m)},
@@ -36,18 +39,21 @@ func (p *openaiProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string)
 	if withHistory {
 		messages = append(messages, map[string]any{
 			"role":    "system",
-			"content": "这封邮件可能是某讨论串/issue/PR 的后续。请先调用 mail_search 工具检索相关历史邮件（例如 action=search query=\"subject:关键词\"，或 action=thread query=该邮件uid），读懂来龙去脉后再分析。",
+			"content": "这封邮件可能是某讨论串/issue/PR 的后续。你可以调用 mail_search 工具读取当前邮件的同主题历史摘要；不要尝试检索无关邮件。",
 		})
-		messages = p.agentLoop(messages)
+		messages = p.agentLoop(ctx, messages, m.UID)
 	}
-	return p.finalStructured(messages)
+	return p.finalStructuredWithContext(ctx, messages)
 }
 
 // agentLoop 让模型自主多轮调用 mail_search 检索历史，把对话上下文累积进 messages。
-func (p *openaiProvider) agentLoop(messages []map[string]any) []map[string]any {
+func (p *openaiProvider) agentLoop(ctx context.Context, messages []map[string]any, uid uint32) []map[string]any {
 	tools := []map[string]any{mailSearchTool()}
 	for round := 0; round < maxToolRounds; round++ {
-		raw, err := p.post(map[string]any{"model": p.cfg.Model, "messages": messages, "tools": tools})
+		if ctx.Err() != nil {
+			break
+		}
+		raw, err := p.postWithContext(ctx, map[string]any{"model": p.cfg.Model, "messages": messages, "tools": tools})
 		if err != nil {
 			break
 		}
@@ -61,7 +67,7 @@ func (p *openaiProvider) agentLoop(messages []map[string]any) []map[string]any {
 		for _, tc := range calls {
 			fmt.Fprintf(os.Stderr, "[openai agent] 第%d轮检索: %s\n", round+1, tc.argsJSON)
 			messages = append(messages, map[string]any{
-				"role": "tool", "tool_call_id": tc.id, "content": execToolSearch(tc.argsJSON),
+				"role": "tool", "tool_call_id": tc.id, "content": execToolSearch(ctx, tc.argsJSON, uid),
 			})
 		}
 	}
@@ -70,7 +76,11 @@ func (p *openaiProvider) agentLoop(messages []map[string]any) []map[string]any {
 
 // finalStructured 不带 tools、强制 json_schema，得到最终结构化结果。
 func (p *openaiProvider) finalStructured(messages []map[string]any) (*Analysis, error) {
-	raw, err := p.post(map[string]any{
+	return p.finalStructuredWithContext(context.Background(), messages)
+}
+
+func (p *openaiProvider) finalStructuredWithContext(ctx context.Context, messages []map[string]any) (*Analysis, error) {
+	raw, err := p.postWithContext(ctx, map[string]any{
 		"model":    p.cfg.Model,
 		"messages": messages,
 		"response_format": map[string]any{
@@ -89,12 +99,16 @@ func (p *openaiProvider) finalStructured(messages []map[string]any) (*Analysis, 
 }
 
 func (p *openaiProvider) post(body map[string]any) ([]byte, error) {
+	return p.postWithContext(context.Background(), body)
+}
+
+func (p *openaiProvider) postWithContext(ctx context.Context, body map[string]any) ([]byte, error) {
 	base := p.cfg.BaseURL
 	if base == "" {
 		base = "https://api.openai.com/v1"
 	}
 	buf, _ := json.Marshal(body)
-	req, err := http.NewRequest("POST", strings.TrimRight(base, "/")+"/chat/completions", bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(base, "/")+"/chat/completions", bytes.NewReader(buf))
 	if err != nil {
 		return nil, err
 	}
@@ -108,9 +122,9 @@ func (p *openaiProvider) post(body map[string]any) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("OpenAI API %d: %s", resp.StatusCode, tail(string(raw), 200))
+		return nil, fmt.Errorf("openai API HTTP %d", resp.StatusCode)
 	}
 	return raw, nil
 }
@@ -169,29 +183,27 @@ func mailSearchTool() map[string]any {
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"action": map[string]any{"type": "string", "enum": []string{"search", "thread", "get"}, "description": "search=按Gmail语法搜索; thread=按uid取同主题; get=按uid取正文"},
-					"query":  map[string]any{"type": "string", "description": "search 时为搜索语法(如 subject:xxx / from:yyy)；thread/get 时为邮件 uid"},
+					"action": map[string]any{"type": "string", "enum": []string{"thread"}, "description": "thread=读取当前邮件的同主题历史摘要和有限正文摘录"},
 				},
-				"required": []string{"action", "query"},
+				"required": []string{"action"},
 			},
 		},
 	}
 }
 
 // execToolSearch 调用自身 tool-search 子命令复用同一检索实现（不挂框架）。
-func execToolSearch(argsJSON string) string {
+func execToolSearch(ctx context.Context, argsJSON string, uid uint32) string {
 	var a struct {
 		Action string `json:"action"`
-		Query  string `json:"query"`
 	}
-	if json.Unmarshal([]byte(argsJSON), &a) != nil || a.Action == "" {
+	if json.Unmarshal([]byte(argsJSON), &a) != nil || a.Action != "thread" {
 		return "(工具参数解析失败)"
 	}
 	self, err := os.Executable()
 	if err != nil || self == "" {
 		self = "mailpilot"
 	}
-	out, _ := exec.Command(self, "tool-search", a.Action, a.Query).CombinedOutput()
+	out, _ := exec.CommandContext(ctx, self, "tool-search", "thread", fmt.Sprint(uid)).CombinedOutput()
 	s := string(out)
 	if len(s) > 4000 {
 		s = s[:4000]

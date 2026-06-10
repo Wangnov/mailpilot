@@ -51,7 +51,7 @@ func (n *barkNotifier) Send(m Message) error {
 		return err
 	}
 	if code != 200 || !strings.Contains(string(body), `"code":200`) {
-		return fmt.Errorf("bark 返回: %s", string(body))
+		return fmt.Errorf("bark 返回 HTTP %d", code)
 	}
 	return nil
 }

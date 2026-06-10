@@ -45,9 +45,9 @@ func (p *ollamaProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string)
 		return nil, transientErr(err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != 200 {
-		return nil, transientErr(fmt.Errorf("Ollama %d: %s", resp.StatusCode, tail(string(raw), 200)))
+		return nil, transientErr(fmt.Errorf("ollama HTTP %d", resp.StatusCode))
 	}
 	var r struct {
 		Message struct {
@@ -55,7 +55,7 @@ func (p *ollamaProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string)
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return nil, transientErr(fmt.Errorf("Ollama 响应解析失败: %s", tail(string(raw), 200)))
+		return nil, transientErr(fmt.Errorf("ollama 响应解析失败"))
 	}
 	a, err := parseAnalysis([]byte(r.Message.Content))
 	if err != nil {

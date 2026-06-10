@@ -28,7 +28,7 @@ analyze:
     - type: openai                # OpenAI 或任意兼容端点(可加 base_url)
       model: gpt-5.4-mini
       api_key: ${OPENAI_API_KEY}
-    # - type: codex               # ChatGPT 订阅(本机需装 codex CLI)，省 API 费但可能限流
+    # - type: codex               # ChatGPT 订阅(本机需装 codex CLI)，单轮只读沙箱
     #   model: gpt-5.3-codex-spark
     # - type: ollama              # 本地模型，隐私优先零成本(单轮，无 agentic 历史)
     #   model: qwen2.5
@@ -48,6 +48,9 @@ notify:
   - type: bark
     key: ${BARK_KEY}
     # icon: https://your.cdn/icon.png   # 推送图标；省略=内置 logo，设为 "" 关闭
+  # - type: webhook
+  #   url: ${WEBHOOK_URL}
+  #   format: wecom              # 可选：generic / wecom / slack；常见企业微信/Slack URL 会自动识别
 
 pipeline:
   baseline_on_first_run: true
@@ -69,7 +72,7 @@ func usage() {
   mailpilot init   [-c config.yaml]      生成配置模板
   mailpilot run    [-c config.yaml]      处理一次新邮件(适合 cron 兜底)
   mailpilot daemon [-c config.yaml]      常驻 IMAP IDLE，新邮件秒级触发
-  mailpilot tool-search <search|get|thread> ...   只读历史检索(供 agentic 调用)`)
+	  mailpilot tool-search <search|get|thread> ...   只读历史检索(供受限历史工具调用/人工排查)`)
 }
 
 func main() {
@@ -108,7 +111,7 @@ func main() {
 }
 
 func loadCfg(path string) *config.Config {
-	// 用绝对路径，确保 codex/openai 派生的 tool-search 子进程无论 CWD 如何都能定位配置。
+	// 用绝对路径，确保 openai 派生的 tool-search 子进程无论 CWD 如何都能定位配置。
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
 	}
@@ -211,7 +214,11 @@ func cmdToolSearch(path string, maxN int, args []string) {
 			fmt.Println("（未找到该邮件）")
 			return
 		}
-		norm := normSubject(m.Subject)
+		norm, ok := threadSearchSubject(m.Subject)
+		if !ok {
+			fmt.Printf("（未找到同主题历史）规范化主题=%q\n", norm)
+			return
+		}
 		uids := reverseLimit(must(box.Search(buildCriteria("subject:"+norm))), maxN)
 		if len(uids) == 0 {
 			fmt.Printf("（未找到同主题历史）规范化主题=%q\n", norm)
@@ -219,8 +226,8 @@ func cmdToolSearch(path string, maxN int, args []string) {
 		}
 		fmt.Printf("同主题《%s》共 %d 封：\n", norm, len(uids))
 		for _, u := range uids {
-			if mm, _ := box.Fetch(u, 0); mm != nil {
-				fmt.Printf("- uid=%d | %s | 发件人:%s\n", u, cut(mm.Date, 25), cut(mm.From, 40))
+			if mm, _ := box.Fetch(u, 1200); mm != nil {
+				fmt.Println(formatThreadEntry(u, mm))
 			}
 		}
 	default:
@@ -245,6 +252,11 @@ var reNorm = regexp.MustCompile(`(?i)^\s*((re|fwd|fw|答复|转发)\s*[:：]\s*)
 
 func normSubject(s string) string { return strings.TrimSpace(reNorm.ReplaceAllString(s, "")) }
 
+func threadSearchSubject(subject string) (string, bool) {
+	norm := normSubject(subject)
+	return norm, len([]rune(norm)) >= 2
+}
+
 func reverseLimit(uids []uint32, n int) []uint32 {
 	out := make([]uint32, 0, n)
 	for i := len(uids) - 1; i >= 0 && len(out) < n; i-- {
@@ -259,6 +271,18 @@ func cut(s string, n int) string {
 		return string(r[:n])
 	}
 	return s
+}
+
+func formatThreadEntry(uid uint32, m *imap.Mail) string {
+	line := fmt.Sprintf("- uid=%d | %s | 发件人:%s | 主题:%s", uid, cut(m.Date, 25), cut(m.From, 40), cut(m.Subject, 80))
+	if body := cut(oneLine(m.Body), 500); body != "" {
+		line += "\n  正文摘录: " + body
+	}
+	return line
+}
+
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func must(uids []uint32, _ error) []uint32 { return uids }

@@ -49,6 +49,7 @@ type Notifier struct {
 	ChatID   string  `yaml:"chat_id"`
 	Topic    string  `yaml:"topic"`
 	URL      string  `yaml:"url"`
+	Format   string  `yaml:"format"` // webhook: wecom(默认) | slack | generic
 }
 
 type Pipeline struct {

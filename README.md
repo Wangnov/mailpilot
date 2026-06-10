@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  IMAP IDLE · agentic history · image OCR · Bark / Telegram / ntfy / Webhook · prompt-injection hardened · cross-compiled
+  IMAP IDLE · bounded history · image OCR · Bark / Telegram / ntfy / Webhook · prompt-injection hardened · cross-compiled
 </p>
 
 ---
@@ -42,11 +42,11 @@
 - 📦 **单静态二进制** — `go build` 出一个文件；`make cross` 出 linux/amd64·arm64、darwin/arm64…
 - ⚡ **实时** — IMAP IDLE（goroutine），秒级而非轮询
 - 🧠 **多 provider 自动降级** — `codex`（订阅）→ `openai`/兼容端点 → `gemini` → `ollama`（本地）
-- 🔎 **每个有能力的 provider 都能做 agentic 历史检索** — 当邮件像是某讨论串 / issue 的后续时，模型可自主先检索相关历史邮件再作答。`codex` 用它自己的 agent loop；`openai` 用**内置 function-calling 循环**（不挂 LangChain，约一个文件）。降级到 `openai` 也不丢历史上下文。
+- 🔎 **有边界的历史检索** — 当邮件像是某讨论串 / issue 的后续时，`openai` provider 用内置 function-calling 循环做只读历史检索；`codex` 默认单轮分析，不继承邮件/通知密钥环境。
 - 🖼️ **图片邮件 OCR** — 正文为空的纯图片邮件 → 先过 PaddleOCR 再分析
 - 📱 **智能多渠道推送** — 紧急→破防+声音，垃圾/营销→静默，验证码→模型提取后可复制，点按→打开邮件主链接（无主链接则回退 Gmail），按分类归组
 - ♻️ **可靠** — 去重水位线 + 重试队列 + 首跑基线 + IDLE 断线自动重连
-- 🔒 **安全** — 只读 IMAP，邮件正文视为不可信，prompt-injection 硬化；`codex` 被关进项目内一次性沙箱
+- 🔒 **安全** — 只读 IMAP，邮件正文视为不可信，prompt-injection 硬化；`codex` 被关进项目内只读一次性沙箱
 
 ### 🚀 快速开始
 
@@ -147,7 +147,8 @@ notify:
   # - type: ntfy
   #   topic: my-mail
   # - type: webhook
-  #   url: ${WEBHOOK_URL}        # 企业微信 / Slack / 自定义
+  #   url: ${WEBHOOK_URL}
+  #   format: wecom              # 可选：generic / wecom / slack；常见企业微信/Slack URL 会自动识别
 
 pipeline:
   baseline_on_first_run: true
@@ -160,18 +161,18 @@ pipeline:
 
 ### 🧠 Provider 与降级
 
-- **`codex`** — 你的 ChatGPT 订阅，经 Codex CLI（`codex exec`）。省 API 费但可能被限流，**永远把 `openai`/`ollama` 排在它后面**。agentic 走 codex 自己的 loop，调用 `mailpilot tool-search`。运行**被收进项目内一次性沙箱**：`--ephemeral`（不往 `~/.codex` 落 session）、临时产物只在 `<config 目录>/.mailpilot-work/` 且随用随清、只用临时 `-c`/`-m` 覆盖 —— 绝不改你的 `~/.codex/config.toml`，也不写系统 `/tmp` 或家目录（Linux / macOS 同此）。
+- **`codex`** — 你的 ChatGPT 订阅，经 Codex CLI（`codex exec`）。省 API 费但可能被限流，**永远把 `openai`/`ollama` 排在它后面**。默认单轮分析，不开放历史检索工具。运行**被收进项目内只读一次性沙箱**：`--ephemeral`（不往 `~/.codex` 落 session）、临时产物只在 `<config 目录>/.mailpilot-work/` 且随用随清、子进程不继承 `IMAP_PASSWORD`/`OPENAI_API_KEY`/通知密钥等邮件运行时环境，且不开放沙箱网络。
 - **`openai`** — OpenAI 或任意兼容端点（`base_url`）。**用内置 function-calling 循环做 agentic 历史检索**：模型多轮调用 `mail_search`，最后一次 json-schema 强约束出结构化结果。可靠的主力。
-- **`ollama`** — 全本地、私有、零成本。单轮（本地模型工具调用能力参差）；要 agentic 历史用 `openai`/`codex`。
+- **`ollama`** — 全本地、私有、零成本。单轮（本地模型工具调用能力参差）；要历史检索用 `openai`。
 - **`gemini`** — Google Gemini，官方 Go SDK（原生格式），结构化输出走 `responseSchema`，`api_key` 填 Gemini API key。单轮（无 agentic 历史）。
 
-### 🔎 Agentic 历史检索（不挂框架）
+### 🔎 受限历史检索（不挂框架）
 
-`tool-search` 是**同一个二进制**的隐藏子命令 —— 只读 IMAP 的 search/get/thread。`codex` 在它的沙箱里调用它，`openai` 的循环也 shell 出去调它。于是这一个二进制**同时是 daemon、又是 LLM 调用的工具**。没有 agent 框架，没有额外服务。
+`tool-search` 是**同一个二进制**的隐藏子命令 —— 只读 IMAP 的 search/get/thread。`openai` 的 function-calling 循环在同一封邮件的总超时预算内 shell 出去调它；`codex` 出于不可信邮件安全边界默认不拿历史工具。于是这一个二进制**同时是 daemon、又是受限历史检索工具**。没有 agent 框架，没有额外服务。
 
 ### 📱 推送
 
-按分析结果智能映射渠道能力：紧急→破防+声音、垃圾→静默、验证码→模型提取后可复制（支持字母数字混合码）、点按→打开邮件主链接（无主链接则回退 Gmail）、按分类归组。开箱支持 **Bark / Telegram / ntfy / Webhook**（Webhook 兼容企业微信 / Slack 纯文本字段）。Bark 默认用 mailpilot 的 logo 作推送图标，可用 `notify[].icon` 改 URL，或设为空串关闭。
+按分析结果智能映射渠道能力：紧急→破防+声音、垃圾→静默、验证码→模型提取后可复制（支持字母数字混合码）、点按→打开邮件主链接（无主链接则回退 Gmail）、按分类归组。开箱支持 **Bark / Telegram / ntfy / Webhook**；Webhook 支持 `generic` / `wecom` / `slack` 格式，常见企业微信和 Slack URL 会自动识别。Bark 默认用 mailpilot 的 logo 作推送图标，可用 `notify[].icon` 改 URL，或设为空串关闭。
 
 **垃圾 / 营销邮件**：`垃圾`、`营销推广`、`低` 默认走**静音**推送（仍进通知中心、不响铃）；想彻底不推某些分类，配 `pipeline.skip_categories: [垃圾, 营销推广]`（这些邮件仍会被分析，只是不推）。
 
@@ -184,13 +185,14 @@ pipeline:
 ```bash
 scp dist/mailpilot-linux-arm64 server:/usr/local/bin/mailpilot   # 一个文件，零依赖
 sudo cp deploy/mailpilot.service /etc/systemd/system/
+# 如果 config.yaml 使用 ${ENV}，可在 /home/ubuntu/mailpilot/.env 写入这些环境变量；该文件是可选的。
 sudo systemctl enable --now mailpilot
 sudo journalctl -u mailpilot -f
 ```
 
 ### 🔒 安全
 
-只读 IMAP（应用专用密码，绝不发信/删信）；邮件正文视为**不可信**：包裹进结构标记、中和正文伪造的越狱标记、提示词禁止执行正文里的任何指令——链接**原样保留**以便判断内容真伪（可用工具全是只读的，没有可被诱导执行的能力）。判真伪不写死规则，而是**复用 Gmail 已有的收件箱/垃圾箱信号**作提示。`codex` 子进程**被收进项目内**：一次性沙箱（写不到你的 `config.yaml`/`.env`）、`--ephemeral` 不在 `~/.codex` 堆积、不动你的 codex 配置、系统 temp / 家目录零足迹。所有凭据可吊销。
+只读 IMAP（应用专用密码，绝不发信/删信）；邮件正文视为**不可信**：包裹进结构标记、中和正文伪造的越狱标记、提示词禁止执行正文里的任何指令——链接**原样保留**以便判断内容真伪。判真伪不写死规则，而是**复用 Gmail 已有的收件箱/垃圾箱信号**作提示。`codex` 子进程**被收进项目内**：只读一次性沙箱（写不到你的 `config.yaml`/`.env`）、`--ephemeral` 不在 `~/.codex` 堆积、不动你的 codex 配置、不继承邮件/通知/API 密钥环境、不开放沙箱网络。所有凭据可吊销。
 
 ### 🛠 构建与发布
 
@@ -199,9 +201,10 @@ make build        # 当前平台
 make cross        # linux/amd64·arm64 + darwin/arm64·amd64 → dist/
 make test         # go test -race ./...
 make vet
+make ci           # vet + race test + build + cross
 ```
 
-打 `v*` tag 即触发 GitHub Actions **Release** workflow：交叉编译四平台静态二进制、生成 `SHA256SUMS.txt`、发布 GitHub Release。
+打 `v*` tag 即触发 GitHub Actions **Release** workflow：先确认 tag commit 在 `main` 上并跑 `go vet` / `go test -race`，再交叉编译四平台静态二进制、生成 `SHA256SUMS.txt`、发布 GitHub Release。
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
@@ -226,11 +229,11 @@ One static binary you `scp` and run — **no Python / pip / venv on the target h
 - 📦 **Single static binary** — `go build` → one file; `make cross` → linux/amd64·arm64, darwin/arm64…
 - ⚡ **Real-time** — IMAP IDLE (goroutine), seconds not polling
 - 🧠 **Multi-provider with fallback** — `codex` (subscription) → `openai`/compatible → `gemini` → `ollama` (local)
-- 🔎 **Agentic history lookup, on every capable provider** — when a mail looks like a thread/issue reply, the model can autonomously search related past mail before answering. `codex` uses its own agent loop; `openai` uses a **built-in function-calling loop** (no LangChain, ~one file). So you don't lose history context when falling back off `codex`.
+- 🔎 **Bounded history lookup** — when a mail looks like a thread/issue reply, the `openai` provider uses a built-in function-calling loop for read-only history lookup; `codex` defaults to single-shot analysis and does not inherit mail or notifier secrets.
 - 🖼️ **Image emails OCR'd** — empty-body image mail → PaddleOCR before analysis
 - 📱 **Smart multi-channel push** — urgent→break-through+sound, spam→silent, LLM-extracted codes→copyable, tap→open the mail's primary link (fallback to Gmail), grouped by category
 - ♻️ **Reliable** — dedup watermark + retry queue + first-run baseline + IDLE auto-reconnect
-- 🔒 **Safe** — read-only IMAP, body treated as untrusted, prompt-injection hardened; `codex` confined to a throwaway project-local sandbox
+- 🔒 **Safe** — read-only IMAP, body treated as untrusted, prompt-injection hardened; `codex` confined to a throwaway project-local read-only sandbox
 
 ### 🚀 Quick start
 
@@ -331,7 +334,8 @@ notify:
   # - type: ntfy
   #   topic: my-mail
   # - type: webhook
-  #   url: ${WEBHOOK_URL}        # WeCom / Slack / custom
+  #   url: ${WEBHOOK_URL}
+  #   format: wecom              # optional: generic / wecom / slack; common WeCom/Slack URLs auto-detect
 
 pipeline:
   baseline_on_first_run: true
@@ -344,18 +348,18 @@ pipeline:
 
 ### 🧠 Providers & fallback
 
-- **`codex`** — your ChatGPT subscription via the Codex CLI (`codex exec`). Saves API spend but can be rate-limited — **always put `openai`/`ollama` after it**. Agentic via codex's own loop, calling `mailpilot tool-search`. Runs **confined**: `--ephemeral` (no session files in `~/.codex`), temp artifacts only under `<config-dir>/.mailpilot-work/` and auto-cleaned, only ephemeral `-c`/`-m` overrides — it never edits your `~/.codex/config.toml` nor writes to system `/tmp` or your home dir (Linux & macOS alike).
+- **`codex`** — your ChatGPT subscription via the Codex CLI (`codex exec`). Saves API spend but can be rate-limited — **always put `openai`/`ollama` after it**. Defaults to single-shot analysis without history tools. Runs **confined**: `--ephemeral` (no session files in `~/.codex`), temp artifacts only under `<config-dir>/.mailpilot-work/` and auto-cleaned, no inherited mail/notifier/API key environment, read-only sandbox, and no sandbox network.
 - **`openai`** — OpenAI or any compatible endpoint (`base_url`). **Does agentic history search via a built-in function-calling loop**: the model calls `mail_search` over several rounds, then a final json-schema call produces strict structured output. The reliable workhorse.
-- **`ollama`** — fully local, private, zero-cost. Single-shot (local models' tool-calling varies); use `openai`/`codex` for agentic history.
+- **`ollama`** — fully local, private, zero-cost. Single-shot (local models' tool-calling varies); use `openai` for history lookup.
 - **`gemini`** — Google Gemini via the official Go SDK (native format); structured output through `responseSchema`, put your Gemini API key in `api_key`. Single-shot (no agentic history).
 
-### 🔎 How agentic history works (no framework)
+### 🔎 How bounded history works (no framework)
 
-`tool-search` is a hidden subcommand of the **same binary** — a read-only IMAP search/get/thread. `codex` calls it inside its sandbox; `openai`'s loop shells out to it too. So the one binary is simultaneously the daemon *and* the tool the LLM calls. No agent framework, no extra service.
+`tool-search` is a hidden subcommand of the **same binary** — a read-only IMAP search/get/thread. The `openai` function-calling loop shells out to it within the same per-email timeout budget; `codex` does not receive the history tool by default because email content is untrusted. So the one binary is simultaneously the daemon *and* a bounded history lookup tool. No agent framework, no extra service.
 
 ### 📱 Push
 
-Channel capabilities are mapped from the analysis: urgent→break-through+sound, spam→silent, LLM-extracted codes→copyable (including alphanumeric codes), tap→open the mail's primary link (fallback to Gmail), grouped by category. Ships with **Bark / Telegram / ntfy / Webhook** (the Webhook payload is compatible with WeCom / Slack plain-text fields). Bark uses the mailpilot logo as the default push icon — override the URL via `notify[].icon`, or set an empty string to disable.
+Channel capabilities are mapped from the analysis: urgent→break-through+sound, spam→silent, LLM-extracted codes→copyable (including alphanumeric codes), tap→open the mail's primary link (fallback to Gmail), grouped by category. Ships with **Bark / Telegram / ntfy / Webhook**; Webhook supports `generic` / `wecom` / `slack`, with common WeCom and Slack URLs auto-detected. Bark uses the mailpilot logo as the default push icon — override the URL via `notify[].icon`, or set an empty string to disable.
 
 **Spam / marketing:** `垃圾`, `营销推广`, and `低` default to **silent** pushes (still in Notification Center, no alert); to drop certain categories entirely, set `pipeline.skip_categories: [垃圾, 营销推广]` (those mails are still analyzed, just not pushed).
 
@@ -368,13 +372,14 @@ We only scan `INBOX`: Gmail's own spam never reaches it. The flip side — **a r
 ```bash
 scp dist/mailpilot-linux-arm64 server:/usr/local/bin/mailpilot   # one file, no deps
 sudo cp deploy/mailpilot.service /etc/systemd/system/
+# If config.yaml references ${ENV}, write those variables to /home/ubuntu/mailpilot/.env; that file is optional.
 sudo systemctl enable --now mailpilot
 sudo journalctl -u mailpilot -f
 ```
 
 ### 🔒 Security
 
-Read-only IMAP (App Password, never sends/deletes); email bodies treated as **untrusted**: wrapped in structural delimiters, in-body jailbreak markers neutralized, prompt forbids executing any in-body instructions — URLs are **kept intact** for content judgment, since every exposed tool is read-only and can't be coerced into acting. Authenticity isn't judged by hardcoded rules but by **reusing Gmail's existing inbox/spam signals** as hints. The `codex` subprocess is **confined to the project**: a throwaway per-run sandbox (writes can't reach your `config.yaml`/`.env`), `--ephemeral` so nothing accumulates in `~/.codex`, your codex config left untouched, zero footprint in system temp or your home dir. All credentials revocable.
+Read-only IMAP (App Password, never sends/deletes); email bodies treated as **untrusted**: wrapped in structural delimiters, in-body jailbreak markers neutralized, prompt forbids executing any in-body instructions, and URLs are kept intact for content judgment. Authenticity isn't judged by hardcoded rules but by **reusing Gmail's existing inbox/spam signals** as hints. The `codex` subprocess is **confined to the project**: a throwaway read-only sandbox (writes can't reach your `config.yaml`/`.env`), `--ephemeral` so nothing accumulates in `~/.codex`, no inherited mail/notifier/API key environment, no sandbox network, and your codex config left untouched. All credentials revocable.
 
 ### 🛠 Build & release
 
@@ -383,9 +388,10 @@ make build        # current platform
 make cross        # linux/amd64·arm64 + darwin/arm64·amd64 → dist/
 make test         # go test -race ./...
 make vet
+make ci           # vet + race test + build + cross
 ```
 
-Pushing a `v*` tag triggers the GitHub Actions **Release** workflow: cross-compile four static binaries, emit `SHA256SUMS.txt`, and publish a GitHub Release.
+Pushing a `v*` tag triggers the GitHub Actions **Release** workflow: first verify the tag commit is on `main` and run `go vet` / `go test -race`, then cross-compile four static binaries, emit `SHA256SUMS.txt`, and publish a GitHub Release.
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0

@@ -12,19 +12,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26.4"
+
+      - name: Verify tag commit is on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+
+      - name: Verify release candidate
+        run: |
+          go vet ./...
+          go test -race ./...
 
       - name: Cross-compile static binaries
         run: |
-          mkdir -p dist
-          for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
-            export GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0
-            out="mailpilot-${GOOS}-${GOARCH}"
-            echo "→ building $out"
-            go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/${out}" .
-          done
+          make cross VERSION="${GITHUB_REF_NAME}"
           cd dist && sha256sum mailpilot-* > SHA256SUMS.txt && ls -lh
 
       - name: Publish GitHub Release
