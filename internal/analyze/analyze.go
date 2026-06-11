@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -221,17 +222,66 @@ func mailboxContext(m *imap.Mail) string {
 func parseAnalysis(b []byte) (*Analysis, error) {
 	s := bytes.TrimSpace(b)
 	var a Analysis
-	if json.Unmarshal(s, &a) == nil && a.Category != "" {
-		return &a, nil
+	if json.Unmarshal(s, &a) == nil {
+		if err := validateAnalysis(&a); err == nil {
+			return &a, nil
+		}
 	}
 	if i := bytes.IndexByte(s, '{'); i >= 0 {
 		if j := bytes.LastIndexByte(s, '}'); j > i {
-			if json.Unmarshal(s[i:j+1], &a) == nil && a.Category != "" {
-				return &a, nil
+			if json.Unmarshal(s[i:j+1], &a) == nil {
+				if err := validateAnalysis(&a); err == nil {
+					return &a, nil
+				}
 			}
 		}
 	}
-	return nil, fmt.Errorf("模型输出非合法 JSON: %s", tail(string(s), 200))
+	return nil, fmt.Errorf("模型输出非合法 JSON 或字段不完整")
+}
+
+var (
+	validCategories = map[string]bool{
+		"工作": true, "财务": true, "账单": true, "营销推广": true, "通知": true,
+		"个人": true, "验证码": true, "垃圾": true, "其他": true,
+	}
+	validUrgencies = map[string]bool{"高": true, "中": true, "低": true}
+)
+
+func validateAnalysis(a *Analysis) error {
+	if a == nil {
+		return fmt.Errorf("空分析结果")
+	}
+	if !validCategories[a.Category] {
+		return fmt.Errorf("未知分类: %s", a.Category)
+	}
+	if !validUrgencies[a.Urgency] {
+		return fmt.Errorf("未知紧急度: %s", a.Urgency)
+	}
+	if strings.TrimSpace(a.Summary) == "" {
+		return fmt.Errorf("summary 为空")
+	}
+	if a.KeyPoints == nil {
+		return fmt.Errorf("key_points 缺失")
+	}
+	if actionURL := cleanedActionURL(a.ActionURL); actionURL != "" {
+		u, err := url.Parse(actionURL)
+		if err != nil || !u.IsAbs() || u.Host == "" {
+			return fmt.Errorf("action_url 非绝对 URL")
+		}
+		switch strings.ToLower(u.Scheme) {
+		case "http", "https":
+			a.ActionURL = u.String()
+		default:
+			return fmt.Errorf("action_url scheme 不允许: %s", u.Scheme)
+		}
+	} else {
+		a.ActionURL = ""
+	}
+	return nil
+}
+
+func cleanedActionURL(raw string) string {
+	return strings.Trim(strings.TrimSpace(raw), "<>\"'")
 }
 
 func tail(s string, n int) string {

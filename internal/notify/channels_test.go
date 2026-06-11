@@ -34,6 +34,12 @@ func TestTelegramNotifierSend(t *testing.T) {
 	if !strings.Contains(text, `A\_\[x\]`) || !strings.Contains(text, `B\_\(y\)`) {
 		t.Fatalf("markdown was not escaped: %q", text)
 	}
+	if strings.Contains(text, "[在 Gmail 打开](") {
+		t.Fatalf("url should be sent as button, not markdown link: %q", text)
+	}
+	if got["reply_markup"] == nil {
+		t.Fatalf("telegram url button missing: %v", got)
+	}
 	if got["disable_notification"] != true {
 		t.Fatalf("passive message should disable notification: %v", got)
 	}
@@ -99,9 +105,65 @@ func TestWebhookNotifierSend(t *testing.T) {
 	}
 }
 
+func TestWebhookWeComBusinessFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"errcode":93000,"errmsg":"invalid webhook"}`))
+	}))
+	defer srv.Close()
+
+	n := &webhookNotifier{cfg: config.Notifier{URL: srv.URL, Format: "wecom"}}
+	if err := n.Send(Message{Title: "t", Body: "b"}); err == nil {
+		t.Fatal("wecom errcode should fail")
+	}
+}
+
+func TestWebhookSlackFormat(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`ok`))
+	}))
+	defer srv.Close()
+
+	n := &webhookNotifier{cfg: config.Notifier{URL: srv.URL, Format: "slack"}}
+	if err := n.Send(Message{Title: "标题", Body: "正文"}); err != nil {
+		t.Fatal(err)
+	}
+	if got["text"] != "标题\n正文" {
+		t.Fatalf("slack payload=%v", got)
+	}
+}
+
+func TestWebhookAutoDetectsCommonHosts(t *testing.T) {
+	if got := webhookFormat(config.Notifier{URL: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=x"}); got != "wecom" {
+		t.Fatalf("wecom autodetect=%q", got)
+	}
+	if got := webhookFormat(config.Notifier{URL: "https://hooks.slack.com/services/T/B/C"}); got != "slack" {
+		t.Fatalf("slack autodetect=%q", got)
+	}
+	if got := webhookFormat(config.Notifier{URL: "https://example.com/webhook"}); got != "generic" {
+		t.Fatalf("generic default=%q", got)
+	}
+}
+
 func TestBuildNotifierErrors(t *testing.T) {
 	if _, err := BuildNotifier(config.Notifier{Type: "missing"}); err == nil {
 		t.Fatal("unknown notifier should fail")
+	}
+	if _, err := BuildNotifier(config.Notifier{Type: "bark"}); err == nil {
+		t.Fatal("bark without key should fail at build")
+	}
+	if _, err := BuildNotifier(config.Notifier{Type: "telegram"}); err == nil {
+		t.Fatal("telegram without credentials should fail at build")
+	}
+	if _, err := BuildNotifier(config.Notifier{Type: "ntfy"}); err == nil {
+		t.Fatal("ntfy without topic should fail at build")
+	}
+	if _, err := BuildNotifier(config.Notifier{Type: "webhook"}); err == nil {
+		t.Fatal("webhook without url should fail at build")
+	}
+	if _, err := BuildNotifier(config.Notifier{Type: "webhook", URL: "https://example.com", Format: "bad"}); err == nil {
+		t.Fatal("unknown webhook format should fail")
 	}
 	if err := (&telegramNotifier{}).Send(Message{}); err == nil {
 		t.Fatal("telegram without credentials should fail")

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wangnov/mailpilot/internal/analyze"
@@ -37,6 +38,7 @@ type scanTarget struct {
 	lastUID      *uint32
 	baselineDone *bool
 	failed       *map[string]int
+	delivered    *state.DeliveryMap
 	rescue       bool   // 垃圾箱：仅当 LLM 判定它【不是】垃圾/营销时才推送(救回误判)
 	label        string // 日志前缀
 }
@@ -98,8 +100,11 @@ func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, er
 	p := &Pipeline{
 		cfg: cfg, log: log, box: imap.New(cfg.IMAP),
 		providers: providers, notifiers: notifiers, ocrEngine: ocrEngine,
-		st:   state.Load(cfg.Pipeline.StatePath),
 		pace: 300 * time.Millisecond,
+	}
+	p.st, err = state.Load(cfg.Pipeline.StatePath)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.Pipeline.ScanSpam { // 兜底扫垃圾箱：单独连接；mailbox 留空则 Connect 自动探测 \Junk
 		spamCfg := cfg.IMAP
@@ -110,9 +115,10 @@ func New(cfg *config.Config, configPath string, log func(string)) (*Pipeline, er
 }
 
 var (
-	reFwd = regexp.MustCompile(`(?i)^\s*(re|fwd|fw)\s*[:：]`)
-	reZh  = regexp.MustCompile(`(答复|转发)[:：]`)
-	reIss = regexp.MustCompile(`(?i)(#\d{1,7}\b|issue|pull request|\bPR\b|工单|ticket)`)
+	reFwd              = regexp.MustCompile(`(?i)^\s*(re|fwd|fw)\s*[:：]`)
+	reZh               = regexp.MustCompile(`(答复|转发)[:：]`)
+	reIss              = regexp.MustCompile(`(?i)(#\d{1,7}\b|issue|pull request|\bPR\b|工单|ticket)`)
+	rePreservedLinkURL = regexp.MustCompile(`\s+\(https?://[^)\s]+(?:\s+[^)]*)?\)`)
 )
 
 func likelyHasHistory(m *imap.Mail) bool {
@@ -131,9 +137,13 @@ func (p *Pipeline) processOne(uid uint32, tgt scanTarget) error {
 		p.log(fmt.Sprintf("%suid=%d 取信失败(可能已删)，跳过", tgt.label, uid))
 		return nil
 	}
-	if p.ocrEngine != nil && p.cfg.OCR.Enabled && len([]rune(mail.Body)) < p.cfg.OCR.MinBody && len(mail.Images) > 0 {
+	if p.ocrEngine != nil && p.cfg.OCR.Enabled && len([]rune(bodyForOCRThreshold(mail.Body))) < p.cfg.OCR.MinBody && len(mail.Images) > 0 {
 		if t := p.ocrEngine.Images(mail.Images); t != "" {
-			mail.Body = "[此邮件正文主要为图片，以下为 OCR 识别结果]\n" + t
+			if strings.TrimSpace(mail.Body) == "" {
+				mail.Body = "[此邮件正文主要为图片，以下为 OCR 识别结果]\n" + t
+			} else {
+				mail.Body = mail.Body + "\n\n[OCR 识别结果]\n" + t
+			}
 		}
 	}
 	hist := p.cfg.Pipeline.HistorySearch && likelyHasHistory(mail)
@@ -153,11 +163,61 @@ func (p *Pipeline) processOne(uid uint32, tgt scanTarget) error {
 		p.log(fmt.Sprintf("· uid=%d 分类[%s] 命中忽略规则，跳过推送", uid, a.Category))
 		return nil // 已成功分析、仅按规则不推送：算处理完成，水位线照常推进
 	}
-	if !notify.NotifyAll(p.notifiers, mail, a, p.log) {
-		return fmt.Errorf("部分通知渠道失败")
+	if err := p.notifyPending(tgt, uid, mail, a); err != nil {
+		return err
 	}
 	p.log(fmt.Sprintf("%s✓ uid=%d 已推送 [%s/%s]", tgt.label, uid, a.Category, a.Urgency))
 	return nil
+}
+
+func (p *Pipeline) notifyPending(tgt scanTarget, uid uint32, mail *imap.Mail, a *analyze.Analysis) error {
+	m := notify.BuildMessage(mail, a)
+	key := strconv.Itoa(int(uid))
+	delivered := (*tgt.delivered)[key]
+	if delivered == nil {
+		delivered = map[string]bool{}
+	}
+	(*tgt.delivered)[key] = delivered
+	ok := true
+	for i, n := range p.notifiers {
+		nk := notifierKey(i, n)
+		if delivered[nk] {
+			continue
+		}
+		if err := n.Send(m); err != nil {
+			ok = false
+			p.log(fmt.Sprintf("通知渠道 %s 失败: %s", n.Name(), err.Error()))
+			continue
+		}
+		delivered[nk] = true
+		if err := p.st.Save(); err != nil {
+			return err
+		}
+	}
+	if !ok {
+		return fmt.Errorf("部分通知渠道失败")
+	}
+	return nil
+}
+
+func bodyForOCRThreshold(body string) string {
+	const marker = "[HTML 链接]\n"
+	trimmed := strings.TrimSpace(body)
+	if strings.HasPrefix(trimmed, marker) {
+		return ""
+	}
+	if i := strings.Index(body, "\n\n"+marker); i >= 0 {
+		return bodyTextForOCRThreshold(body[:i])
+	}
+	return bodyTextForOCRThreshold(body)
+}
+
+func bodyTextForOCRThreshold(body string) string {
+	return strings.TrimSpace(rePreservedLinkURL.ReplaceAllString(body, ""))
+}
+
+func notifierKey(i int, n notify.Notifier) string {
+	return fmt.Sprintf("%02d:%s", i, n.Name())
 }
 
 // skipCategory 判断某分类是否在「只分析不推送」忽略名单内。
@@ -172,16 +232,25 @@ func skipCategory(category string, skip []string) bool {
 
 func (p *Pipeline) inboxTarget() scanTarget {
 	return scanTarget{box: p.box, uidv: &p.st.UIDValidity, lastUID: &p.st.LastUID,
-		baselineDone: &p.st.BaselineDone, failed: &p.st.Failed}
+		baselineDone: &p.st.BaselineDone, failed: &p.st.Failed, delivered: &p.st.Delivered}
 }
 
 func (p *Pipeline) spamTarget() scanTarget {
 	return scanTarget{box: p.spamBox, uidv: &p.st.SpamUIDValidity, lastUID: &p.st.SpamLastUID,
-		baselineDone: &p.st.SpamBaselineDone, failed: &p.st.SpamFailed, rescue: true, label: "[垃圾箱] "}
+		baselineDone: &p.st.SpamBaselineDone, failed: &p.st.SpamFailed, delivered: &p.st.SpamDelivered, rescue: true, label: "[垃圾箱] "}
 }
 
 // RunOnce 扫一遍收件箱；若开启 scan_spam，再兜底扫一遍垃圾箱(救回误判)。垃圾箱失败不影响主流程。
 func (p *Pipeline) RunOnce() error {
+	lock, err := state.AcquireLock(p.cfg.Pipeline.StatePath)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	p.st, err = state.Load(p.cfg.Pipeline.StatePath)
+	if err != nil {
+		return err
+	}
 	if err := p.scanOnce(p.inboxTarget()); err != nil {
 		return err
 	}
@@ -200,7 +269,10 @@ func (p *Pipeline) scanOnce(tgt scanTarget) error {
 	}
 	defer tgt.box.Close()
 
-	uidv, _ := tgt.box.UIDValidity()
+	uidv, err := tgt.box.UIDValidity()
+	if err != nil {
+		return err
+	}
 	all, err := tgt.box.AllUIDs()
 	if err != nil {
 		return err
@@ -216,6 +288,7 @@ func (p *Pipeline) scanOnce(tgt scanTarget) error {
 
 	if p.cfg.Pipeline.BaselineOnFirstRun && (!*tgt.baselineDone || *tgt.uidv != uidv) {
 		*tgt.uidv, *tgt.lastUID, *tgt.baselineDone, *tgt.failed = uidv, maxUID, true, map[string]int{}
+		*tgt.delivered = state.DeliveryMap{}
 		p.log(fmt.Sprintf("%s基线已建立：共 %d 封，水位 last_uid=%d，本次不推历史。", tgt.label, len(all), maxUID))
 		return nil
 	}
@@ -238,12 +311,14 @@ func (p *Pipeline) scanOnce(tgt scanTarget) error {
 			failed[k] = v
 		}
 	}
+	pruneDeliveryMap(*tgt.delivered, allSet)
 	for _, uid := range todo {
 		key := strconv.Itoa(int(uid))
 		err := p.processOne(uid, tgt)
 		switch {
 		case err == nil:
 			delete(failed, key)
+			delete(*tgt.delivered, key)
 		case analyze.IsDroppable(err):
 			// 模型已响应但产物无法解析——这封邮件本身有问题，多次后放弃。
 			failed[key]++
@@ -261,15 +336,29 @@ func (p *Pipeline) scanOnce(tgt scanTarget) error {
 			}
 			p.log(fmt.Sprintf("%s✗ uid=%d 暂时性故障，保留重试(不计入放弃): %s", tgt.label, uid, err.Error()))
 		}
+		*tgt.lastUID = advanceWatermark([]uint32{uid}, *tgt.lastUID)
+		*tgt.failed = failed
+		*tgt.uidv = uidv
+		if err := p.st.Save(); err != nil {
+			return err
+		}
 		time.Sleep(p.pace)
 	}
 
 	// 水位线只推进到本轮 todo 里实际覆盖的最大 uid（retry 的旧 uid < last 不影响）。
-	*tgt.lastUID = advanceWatermark(todo, *tgt.lastUID)
 	*tgt.failed = failed
 	*tgt.uidv = uidv
 	p.log(fmt.Sprintf("%s本轮完成。水位 last_uid=%d，待重试 %d 封。", tgt.label, *tgt.lastUID, len(failed)))
 	return nil
+}
+
+func pruneDeliveryMap(delivered state.DeliveryMap, allSet map[uint32]bool) {
+	for k := range delivered {
+		v, err := strconv.ParseUint(k, 10, 32)
+		if err != nil || !allSet[uint32(v)] {
+			delete(delivered, k)
+		}
+	}
 }
 
 // Daemon 常驻 IMAP IDLE，新邮件秒级触发；断连自动重连。

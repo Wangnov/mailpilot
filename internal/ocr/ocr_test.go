@@ -1,8 +1,10 @@
 package ocr
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -77,5 +79,79 @@ func TestPaddleEngineImages(t *testing.T) {
 	}
 	if polls != 2 {
 		t.Fatalf("polls=%d, want 2", polls)
+	}
+}
+
+func TestAllowedOCRResultURL(t *testing.T) {
+	if !allowedOCRResultURL("https://paddleocr.example.com/jobs", "https://storage.example.com/result.jsonl") {
+		t.Fatal("https public result should be allowed")
+	}
+	if allowedOCRResultURL("http://paddleocr.example.com/jobs", "http://100.64.0.1/result.jsonl") {
+		t.Fatal("CGNAT result should be rejected")
+	}
+	if allowedOCRResultURL("https://paddleocr.example.com/jobs", "http://169.254.169.254/result.jsonl") {
+		t.Fatal("link-local result should be rejected")
+	}
+	if allowedOCRResultURL("https://paddleocr.example.com/jobs", "http://localhost/result.jsonl") {
+		t.Fatal("localhost result should be rejected")
+	}
+	if !allowedOCRResultURL("http://127.0.0.1:1234/jobs", "http://127.0.0.1:1234/result.jsonl") {
+		t.Fatal("same-host local test server should be allowed")
+	}
+	if safeResultIP(net.ParseIP("100.64.0.1"), false) {
+		t.Fatal("CGNAT IP should be rejected")
+	}
+	if !safeResultIP(net.ParseIP("8.8.8.8"), false) {
+		t.Fatal("public IP should be allowed")
+	}
+	if !safeResultIP(net.ParseIP("127.0.0.1"), true) {
+		t.Fatal("same-host local test IP should be allowed")
+	}
+}
+
+func TestFetchOCRTextDoesNotFollowRedirect(t *testing.T) {
+	private := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"layoutParsingResults":[{"markdown":{"text":"secret"}}]}}`))
+	}))
+	defer private.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, private.URL+"/result.jsonl", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	p := &paddleEngine{
+		cfg:    config.OCR{JobURL: srv.URL + "/jobs"},
+		log:    func(string) {},
+		client: srv.Client(),
+		sleep:  func(time.Duration) {},
+	}
+	if got := p.fetchOCRText(t.Context(), srv.URL+"/result.jsonl"); got != "" {
+		t.Fatalf("redirected result should not be read, got %q", got)
+	}
+}
+
+func TestFetchOCRTextRejectsObfuscatedLocalAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"layoutParsingResults":[{"markdown":{"text":"secret"}}]}}`))
+	}))
+	defer srv.Close()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := &paddleEngine{
+		cfg:    config.OCR{JobURL: "http://paddleocr.example.com/jobs"},
+		log:    func(string) {},
+		client: srv.Client(),
+		sleep:  func(time.Duration) {},
+	}
+	if got := p.fetchOCRText(t.Context(), "http://2130706433:"+port+"/result.jsonl"); got != "" {
+		t.Fatalf("obfuscated local result should not be read, got %q", got)
 	}
 }

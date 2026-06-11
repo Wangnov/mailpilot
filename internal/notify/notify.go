@@ -27,6 +27,10 @@ func (m Message) High() bool { return m.Urgency == "高" }
 
 func BuildMessage(mail *imap.Mail, a *analyze.Analysis) Message {
 	lines := []string{"👤 " + truncate(mail.From, 80), "💬 " + a.Summary}
+	cp := copyableVerificationCode(a.VerificationCode)
+	if cp != "" {
+		lines = append(lines, "🔑 验证码: "+cp)
+	}
 	for i, p := range a.KeyPoints {
 		if i >= 6 {
 			break
@@ -37,13 +41,12 @@ func BuildMessage(mail *imap.Mail, a *analyze.Analysis) Message {
 	if title == "" {
 		title = "(无主题)"
 	}
-	var u, cp string
+	var u string
 	if actionURL := validatedActionURL(a.ActionURL); actionURL != "" {
 		u = actionURL
 	} else if id := strings.Trim(mail.MessageID, "<>"); id != "" {
 		u = "https://mail.google.com/mail/u/0/#search/" + url.QueryEscape("rfc822msgid:"+id)
 	}
-	cp = copyableVerificationCode(a.VerificationCode)
 	return Message{
 		Title: truncate(title, 120), Body: strings.Join(lines, "\n"),
 		Category: a.Category, Urgency: a.Urgency, URL: u, Copy: cp,
@@ -84,12 +87,29 @@ type Notifier interface {
 func BuildNotifier(cfg config.Notifier) (Notifier, error) {
 	switch cfg.Type {
 	case "bark":
+		if cfg.Key == "" {
+			return nil, fmt.Errorf("bark 缺少 key")
+		}
 		return &barkNotifier{cfg}, nil
 	case "telegram":
+		if cfg.BotToken == "" || cfg.ChatID == "" {
+			return nil, fmt.Errorf("telegram 缺少 bot_token/chat_id")
+		}
 		return &telegramNotifier{cfg}, nil
 	case "ntfy":
+		if cfg.Topic == "" {
+			return nil, fmt.Errorf("ntfy 缺少 topic")
+		}
 		return &ntfyNotifier{cfg}, nil
 	case "webhook":
+		if cfg.URL == "" {
+			return nil, fmt.Errorf("webhook 缺少 url")
+		}
+		switch strings.ToLower(strings.TrimSpace(cfg.Format)) {
+		case "", "wecom", "slack", "generic":
+		default:
+			return nil, fmt.Errorf("webhook format 仅支持 wecom/slack/generic: %s", cfg.Format)
+		}
 		return &webhookNotifier{cfg}, nil
 	}
 	return nil, fmt.Errorf("未知 notifier 类型: %s", cfg.Type)
@@ -117,7 +137,7 @@ func postJSON(u string, payload any) (int, []byte, error) {
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	return resp.StatusCode, b, nil
 }
 

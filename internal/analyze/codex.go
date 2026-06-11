@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ type codexProvider struct {
 }
 
 func (p *codexProvider) Name() string        { return "codex:" + p.cfg.Model }
-func (p *codexProvider) SupportsTools() bool { return true }
+func (p *codexProvider) SupportsTools() bool { return false }
 
 func (p *codexProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) (*Analysis, error) {
 	prompt := buildPrompt(withHistory, toolCmd, m.UID, p.language)
@@ -50,7 +51,7 @@ func (p *codexProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) 
 	_ = json.NewEncoder(f).Encode(OutputSchema)
 	f.Close()
 
-	// sandbox 是 codex 的空 CWD：workspace-write 把写操作限制在此，碰不到 config.yaml/.env/state.json。
+	// sandbox 是 codex 的空 CWD；read-only sandbox 和最小环境避免触碰邮件配置与密钥。
 	sandbox, err := os.MkdirTemp(base, "codex-cwd-")
 	if err != nil {
 		return nil, transientErr(err)
@@ -67,10 +68,11 @@ func (p *codexProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) 
 	// -c/-m/-s 都是本次调用的临时覆盖，不写回 ~/.codex/config.toml。
 	cmd := exec.CommandContext(ctx, bin, "exec", "-m", p.cfg.Model,
 		"--ephemeral",
-		"--sandbox", "workspace-write",
-		"-c", "sandbox_workspace_write.network_access=true",
+		"--sandbox", "read-only",
+		"-c", "sandbox_workspace_write.network_access=false",
 		"--skip-git-repo-check", "-C", sandbox,
 		"--output-schema", f.Name(), prompt)
+	cmd.Env = minimalCodexEnv()
 	cmd.Stdin = strings.NewReader(buildStdin(m))
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -82,4 +84,23 @@ func (p *codexProvider) Analyze(m *imap.Mail, withHistory bool, toolCmd string) 
 		return nil, droppableErr(err) // codex 回了内容但解析失败：归为可丢弃
 	}
 	return a, nil
+}
+
+func minimalCodexEnv() []string {
+	keep := []string{
+		"HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "CODEX_HOME",
+		"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+		"http_proxy", "https_proxy", "all_proxy", "no_proxy",
+		"SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+	}
+	if runtime.GOOS == "windows" {
+		keep = append(keep, "APPDATA", "LOCALAPPDATA", "USERPROFILE")
+	}
+	out := make([]string, 0, len(keep))
+	for _, k := range keep {
+		if v, ok := os.LookupEnv(k); ok {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out
 }
